@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  LogOut, Gift, LayoutGrid, Sparkles, ArrowRight, Loader2,
+  LogOut, LayoutGrid, Sparkles, ArrowRight, Loader2,
   Mic2, Lightbulb, Users, BookOpen, Layers, Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -199,13 +199,6 @@ export default function TopNav() {
           {/* AI Search Bar */}
           <AISearchBar />
 
-          {/* Blindbox */}
-          <Link href="/blindbox">
-            <Button variant="ghost" size="sm" className="rounded-xl gap-1.5 text-amber-600 hover:bg-amber-50 hover:text-amber-700 px-3">
-              <Gift className="w-4 h-4" />
-              <span className="hidden sm:inline text-sm font-medium">盲盒</span>
-            </Button>
-          </Link>
 
           {/* Auth */}
           {isAuthenticated ? (
