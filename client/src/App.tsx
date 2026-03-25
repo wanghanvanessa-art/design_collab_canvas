@@ -9,6 +9,7 @@ import PixelCat from "./components/PixelCat";
 import Home from "./pages/Home";
 import Meetings from "./pages/Meetings";
 import Ideas from "./pages/Ideas";
+import IdeaDetail from "./pages/IdeaDetail";
 import Interviews from "./pages/Interviews";
 import Knowledge from "./pages/Knowledge";
 import Inspiration from "./pages/Inspiration";
@@ -40,6 +41,17 @@ function Router() {
       </Route>
       <Route path="/ideas">
         <PageLayout><Ideas /></PageLayout>
+      </Route>
+      <Route path="/ideas/:id">
+        {(params) => {
+          const id = parseInt(params.id, 10);
+          return isNaN(id) ? <NotFound /> : (
+            <div className="min-h-screen bg-[#F8F8F6]">
+              <TopNav />
+              <IdeaDetail id={id} />
+            </div>
+          );
+        }}
       </Route>
       <Route path="/interviews">
         <PageLayout><Interviews /></PageLayout>

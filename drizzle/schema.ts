@@ -83,10 +83,39 @@ export const ideaComments = mysqlTable("idea_comments", {
   ideaId: int("ideaId").notNull(),
   userId: int("userId").notNull(),
   content: text("content").notNull(),
+  parentId: int("parentId"), // for nested replies
+  replyToUser: varchar("replyToUser", { length: 100 }), // @mention
+  emoji: varchar("emoji", { length: 10 }), // reaction emoji
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
 export type IdeaComment = typeof ideaComments.$inferSelect;
+
+// ─── IdeaVersions (想法版本历史) ─────────────────────────────────────────────
+export const ideaVersions = mysqlTable("idea_versions", {
+  id: int("id").autoincrement().primaryKey(),
+  ideaId: int("ideaId").notNull(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  content: text("content").notNull(),
+  modules: json("modules").$type<{id: string; title: string; content: string}[]>(),
+  versionNum: int("versionNum").default(1).notNull(),
+  changeNote: varchar("changeNote", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type IdeaVersion = typeof ideaVersions.$inferSelect;
+
+// ─── IdeaReactions (情绪反馈) ────────────────────────────────────────────────
+export const ideaReactions = mysqlTable("idea_reactions", {
+  id: int("id").autoincrement().primaryKey(),
+  ideaId: int("ideaId").notNull(),
+  userId: int("userId").notNull(),
+  type: mysqlEnum("type", ["useful", "discuss", "question"]).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type IdeaReaction = typeof ideaReactions.$inferSelect;
 
 // ─── Interviews (用户访谈全流程管理) ─────────────────────────────────────────
 export const interviews = mysqlTable("interviews", {

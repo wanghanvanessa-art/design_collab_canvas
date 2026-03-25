@@ -7,7 +7,7 @@ import { invokeLLM } from "./_core/llm";
 import { transcribeAudio } from "./_core/voiceTranscription";
 import { getDb } from "./db";
 import {
-  meetings, todos, ideas, ideaComments, interviews,
+  meetings, todos, ideas, ideaComments, ideaVersions, ideaReactions, interviews,
   knowledgeArticles, inspirationItems, designReviews, blindboxItems, activities
 } from "../drizzle/schema";
 import { eq, and, like, or, desc, isNull } from "drizzle-orm";
@@ -245,6 +245,121 @@ const ideasRouter = router({
       await db.update(ideas).set({ commentsCount: (idea.commentsCount || 0) + 1 }).where(eq(ideas.id, input.ideaId));
     }
     return { success: true };
+  }),
+
+  update: protectedProcedure.input(z.object({
+    id: z.number(),
+    title: z.string().optional(),
+    content: z.string().optional(),
+    status: z.enum(["draft", "published", "archived"]).optional(),
+    tags: z.array(z.string()).optional(),
+    modules: z.array(z.object({ id: z.string(), title: z.string(), content: z.string() })).optional(),
+    changeNote: z.string().optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    const [idea] = await db.select().from(ideas).where(and(eq(ideas.id, input.id), eq(ideas.userId, ctx.user.id)));
+    if (!idea) throw new Error("Not found");
+
+    // Save version snapshot before update
+    const versionCount = await db.select().from(ideaVersions).where(eq(ideaVersions.ideaId, input.id));
+    await db.insert(ideaVersions).values({
+      ideaId: input.id,
+      userId: ctx.user.id,
+      title: idea.title,
+      content: idea.content,
+      modules: input.modules || [],
+      versionNum: versionCount.length + 1,
+      changeNote: input.changeNote || `版本 ${versionCount.length + 1}`,
+    });
+
+    const updateData: Record<string, unknown> = {};
+    if (input.title !== undefined) updateData.title = input.title;
+    if (input.content !== undefined) updateData.content = input.content;
+    if (input.status !== undefined) updateData.status = input.status;
+    if (input.tags !== undefined) updateData.tags = input.tags;
+    await db.update(ideas).set(updateData).where(eq(ideas.id, input.id));
+    return { success: true };
+  }),
+
+  versions: protectedProcedure.input(z.object({ ideaId: z.number() })).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return [];
+    return db.select().from(ideaVersions).where(eq(ideaVersions.ideaId, input.ideaId)).orderBy(desc(ideaVersions.createdAt));
+  }),
+
+  rollbackVersion: protectedProcedure.input(z.object({ ideaId: z.number(), versionId: z.number() })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    const [ver] = await db.select().from(ideaVersions).where(eq(ideaVersions.id, input.versionId));
+    if (!ver) throw new Error("Version not found");
+    await db.update(ideas).set({ title: ver.title, content: ver.content }).where(and(eq(ideas.id, input.ideaId), eq(ideas.userId, ctx.user.id)));
+    return { success: true };
+  }),
+
+  reactions: protectedProcedure.input(z.object({ ideaId: z.number() })).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return { useful: 0, discuss: 0, question: 0, userReaction: null };
+    const allReactions = await db.select().from(ideaReactions).where(eq(ideaReactions.ideaId, input.ideaId));
+    const userReaction = allReactions.find(r => r.userId === ctx.user.id);
+    return {
+      useful: allReactions.filter(r => r.type === "useful").length,
+      discuss: allReactions.filter(r => r.type === "discuss").length,
+      question: allReactions.filter(r => r.type === "question").length,
+      userReaction: userReaction?.type || null,
+    };
+  }),
+
+  addReaction: protectedProcedure.input(z.object({
+    ideaId: z.number(),
+    type: z.enum(["useful", "discuss", "question"]),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    // Toggle: remove if same type already exists
+    const existing = await db.select().from(ideaReactions).where(and(eq(ideaReactions.ideaId, input.ideaId), eq(ideaReactions.userId, ctx.user.id)));
+    if (existing.length > 0) {
+      if (existing[0].type === input.type) {
+        await db.delete(ideaReactions).where(eq(ideaReactions.id, existing[0].id));
+        return { action: "removed" };
+      } else {
+        await db.update(ideaReactions).set({ type: input.type }).where(eq(ideaReactions.id, existing[0].id));
+        return { action: "updated" };
+      }
+    }
+    await db.insert(ideaReactions).values({ ideaId: input.ideaId, userId: ctx.user.id, type: input.type });
+    return { action: "added" };
+  }),
+
+  generateExport: protectedProcedure.input(z.object({
+    id: z.number(),
+    format: z.enum(["pdf", "word", "blog", "video_script"]),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    const [idea] = await db.select().from(ideas).where(eq(ideas.id, input.id));
+    if (!idea) throw new Error("Idea not found");
+
+    const systemPrompts: Record<string, string> = {
+      pdf: "你是一个专业报告排版师。请将以下想法内容整理成一份规范的 PDF 报告，包含：摘要、背景分析、方案详情、预期效果、下一步行动。输出 Markdown 格式。",
+      word: "你是一个文档整理师。请将以下想法内容整理成一份 Word 文档，保留层级标题和内容结构，适合二次编辑。输出 Markdown 格式。",
+      blog: "你是一个内容运营专家。请将以下想法整理成一篇适合对外发布的博客文章，包含吸引人的标题、摘要、正文和标签建议。输出 Markdown 格式。",
+      video_script: "你是一个视频脚本策划师。请将以下想法整理成视频脚本，按「镜头编号 | 画面描述 | 台词内容 | 时长建议」的表格格式输出，共 5-8 个镜头。",
+    };
+
+    const llmRes = await invokeLLM({
+      messages: [
+        { role: "system", content: systemPrompts[input.format] },
+        { role: "user", content: `想法标题：${idea.title}\n\n想法内容：${idea.content}` },
+      ],
+    });
+
+    const rawContent = llmRes.choices[0]?.message?.content || "";
+    const rawText = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent);
+    let content = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    if (!content) content = rawText;
+
+    return { title: idea.title, content, format: input.format };
   }),
 
   export: protectedProcedure.input(z.object({

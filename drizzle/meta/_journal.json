@@ -36,6 +36,13 @@
       "when": 1774426297358,
       "tag": "0004_yellow_roland_deschain",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1774432135589,
+      "tag": "0005_rainy_mauler",
+      "breakpoints": true
     }
   ]
 }
