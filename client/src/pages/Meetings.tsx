@@ -10,10 +10,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
+import { useLocation } from "wouter";
 import {
   Mic2, Upload, Plus, CheckCircle2, Circle, Clock, User,
   ChevronDown, Loader2, FileAudio, Trash2, AlertCircle,
-  Sparkles, ListTodo, ArrowRight
+  Sparkles, ListTodo, ArrowRight, ExternalLink
 } from "lucide-react";
 import { BackButton } from "@/components/BackButton";
 
@@ -25,6 +26,7 @@ const priorityConfig = {
 
 export default function Meetings() {
   const { isAuthenticated } = useAuth();
+  const [, navigate] = useLocation();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [newTodoOpen, setNewTodoOpen] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState("");
@@ -232,7 +234,17 @@ export default function Meetings() {
                       ))}
                     </div>
                   )}
-                  <p className="text-[10px] text-muted-foreground mt-2">{new Date(m.createdAt).toLocaleDateString("zh-CN")}</p>
+                  <div className="flex items-center justify-between mt-2">
+                    <p className="text-[10px] text-muted-foreground">{new Date(m.createdAt).toLocaleDateString("zh-CN")}</p>
+                    {m.status === "done" && (
+                      <button
+                        onClick={() => navigate(`/meetings/${m.id}`)}
+                        className="flex items-center gap-1 text-[10px] text-violet-600 hover:text-violet-800 font-medium transition-colors"
+                      >
+                        进入详情 <ExternalLink className="w-2.5 h-2.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

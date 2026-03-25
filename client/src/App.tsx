@@ -15,6 +15,7 @@ import Knowledge from "./pages/Knowledge";
 import Inspiration from "./pages/Inspiration";
 import Reviews from "./pages/Reviews";
 import Blindbox from "./pages/Blindbox";
+import MeetingDetail from "./pages/MeetingDetail";
 
 // PageLayout wraps all non-home pages with TopNav + PixelCat
 function PageLayout({ children }: { children: React.ReactNode }) {
@@ -38,6 +39,17 @@ function Router() {
       {/* Feature pages use PageLayout */}
       <Route path="/meetings">
         <PageLayout><Meetings /></PageLayout>
+      </Route>
+      <Route path="/meetings/:id">
+        {(params) => {
+          const id = parseInt(params.id, 10);
+          return isNaN(id) ? <NotFound /> : (
+            <div className="min-h-screen bg-[#F8F8F6]">
+              <TopNav />
+              <MeetingDetail />
+            </div>
+          );
+        }}
       </Route>
       <Route path="/ideas">
         <PageLayout><Ideas /></PageLayout>

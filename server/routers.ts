@@ -8,7 +8,8 @@ import { transcribeAudio } from "./_core/voiceTranscription";
 import { getDb } from "./db";
 import {
   meetings, todos, ideas, ideaComments, ideaVersions, ideaReactions, interviews,
-  knowledgeArticles, inspirationItems, designReviews, blindboxItems, activities
+  knowledgeArticles, inspirationItems, designReviews, blindboxItems, activities,
+  meetingComments
 } from "../drizzle/schema";
 import { eq, and, like, or, desc, isNull } from "drizzle-orm";
 
@@ -103,6 +104,9 @@ const meetingsRouter = router({
         await db2.update(meetings).set({
           summary: parsed.summary || "",
           keyInsights: parsed.keyInsights || [],
+          structuredMinutes: parsed.structuredMinutes || [],
+          aiInsights: parsed.aiInsights || [],
+          attendees: parsed.attendees || [],
           status: "done",
         }).where(eq(meetings.id, meetingId));
 
@@ -127,6 +131,53 @@ const meetingsRouter = router({
     })();
 
     return { id: meetingId };
+  }),
+
+  getById: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return null;
+    const [meeting] = await db.select().from(meetings).where(and(eq(meetings.id, input.id), eq(meetings.userId, ctx.user.id)));
+    if (!meeting) return null;
+    const meetingTodos = await db.select().from(todos).where(eq(todos.meetingId, input.id)).orderBy(desc(todos.createdAt));
+    return { ...meeting, todos: meetingTodos };
+  }),
+
+  listComments: protectedProcedure.input(z.object({ meetingId: z.number() })).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return [];
+    return db.select().from(meetingComments).where(eq(meetingComments.meetingId, input.meetingId)).orderBy(desc(meetingComments.createdAt));
+  }),
+
+  addComment: protectedProcedure.input(z.object({
+    meetingId: z.number(),
+    content: z.string().min(1),
+    parentId: z.number().optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    await db.insert(meetingComments).values({
+      meetingId: input.meetingId,
+      userId: ctx.user.id,
+      userName: ctx.user.name || "匿名",
+      content: input.content,
+      parentId: input.parentId ?? null,
+    });
+    return { success: true };
+  }),
+
+  updateTodo: protectedProcedure.input(z.object({
+    id: z.number(),
+    title: z.string().optional(),
+    priority: z.enum(["high", "medium", "low"]).optional(),
+    assignee: z.string().optional(),
+    dueDate: z.string().optional(),
+    completed: z.boolean().optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    const { id, ...updates } = input;
+    await db.update(todos).set(updates as any).where(and(eq(todos.id, id), eq(todos.userId, ctx.user.id)));
+    return { success: true };
   }),
 });
 

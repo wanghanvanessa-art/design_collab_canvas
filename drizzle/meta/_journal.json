@@ -43,6 +43,13 @@
       "when": 1774432135589,
       "tag": "0005_rainy_mauler",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1774434703320,
+      "tag": "0006_special_zarda",
+      "breakpoints": true
     }
   ]
 }

@@ -35,12 +35,31 @@ export const meetings = mysqlTable("meetings", {
   transcript: text("transcript"),
   summary: text("summary"),
   keyInsights: json("keyInsights").$type<string[]>(),
+  // 结构化会议纪要：发言人+时间戳+内容段落
+  structuredMinutes: json("structuredMinutes").$type<{speaker: string; timestamp: string; content: string; isConclusion?: boolean}[]>(),
+  // AI 洞察：风险/行动/决策
+  aiInsights: json("aiInsights").$type<{type: 'risk'|'action'|'decision'; content: string}[]>(),
+  duration: int("duration"), // 录音时长（秒）
+  attendees: json("attendees").$type<string[]>(),
   status: mysqlEnum("status", ["uploading", "transcribing", "analyzing", "done", "error"]).default("uploading").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type Meeting = typeof meetings.$inferSelect;
+
+// ─── MeetingComments (会议评论) ───────────────────────────────────────────────
+export const meetingComments = mysqlTable("meeting_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  meetingId: int("meetingId").notNull(),
+  userId: int("userId").notNull(),
+  userName: varchar("userName", { length: 100 }),
+  content: text("content").notNull(),
+  parentId: int("parentId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type MeetingComment = typeof meetingComments.$inferSelect;
 
 // ─── Todos (待办事项) ────────────────────────────────────────────────────────
 export const todos = mysqlTable("todos", {
