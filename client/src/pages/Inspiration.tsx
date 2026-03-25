@@ -21,6 +21,9 @@ const CARD_COLORS = [
   { name: "白色", value: "#ffffff", border: "#e5e7eb" },
 ];
 
+const MIN_W = 160;
+const MIN_H = 100;
+
 type InspirationCard = {
   id: number;
   type: string;
@@ -42,12 +45,26 @@ type InspirationCard = {
   boardId: number | null;
 };
 
+// Resize handle corners
+type ResizeDir = "se" | "sw" | "ne" | "nw";
+
+const RESIZE_CURSORS: Record<ResizeDir, string> = {
+  se: "cursor-se-resize",
+  sw: "cursor-sw-resize",
+  ne: "cursor-ne-resize",
+  nw: "cursor-nw-resize",
+};
+
 export default function Inspiration() {
   const { isAuthenticated } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState<InspirationCard | null>(null);
   const [dragging, setDragging] = useState<number | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+
+  // Resize state
+  const [resizing, setResizing] = useState<{ id: number; dir: ResizeDir; startX: number; startY: number; startW: number; startH: number; startPosX: number; startPosY: number } | null>(null);
+
   const [form, setForm] = useState({ type: "text" as "text" | "image" | "link", title: "", content: "", url: "", color: "#fef9c3" });
 
   // AI Chat state
@@ -58,7 +75,6 @@ export default function Inspiration() {
   const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "ai"; text: string; imageUrl?: string }>>([]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
 
   const { data: items, isLoading } = trpc.inspiration.list.useQuery(undefined, { enabled: isAuthenticated });
@@ -86,9 +102,15 @@ export default function Inspiration() {
 
   const askAI = trpc.inspiration.askAI.useMutation({
     onSuccess: (data) => {
+      // Strip thinking process: only keep content after </think> if present
+      let answer = data.answer;
+      const thinkEnd = answer.lastIndexOf("</think>");
+      if (thinkEnd !== -1) {
+        answer = answer.slice(thinkEnd + 8).trim();
+      }
       setChatMessages(prev => [...prev, {
         role: "ai",
-        text: data.answer,
+        text: answer,
         imageUrl: data.imageUrl || undefined,
       }]);
       utils.inspiration.list.invalidate();
@@ -96,38 +118,106 @@ export default function Inspiration() {
     onError: () => toast.error("AI 回复失败，请重试"),
   });
 
+  // ── Drag handlers ────────────────────────────────────────────────────────────
   const handleMouseDown = useCallback((e: React.MouseEvent, id: number, posX: number, posY: number) => {
     e.preventDefault();
+    e.stopPropagation();
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     setDragging(id);
     setDragOffset({ x: e.clientX - rect.left - posX, y: e.clientY - rect.top - posY });
   }, []);
 
+  // ── Resize handlers ──────────────────────────────────────────────────────────
+  const handleResizeStart = useCallback((e: React.MouseEvent, item: InspirationCard, dir: ResizeDir) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setResizing({
+      id: item.id,
+      dir,
+      startX: e.clientX,
+      startY: e.clientY,
+      startW: item.width ?? 200,
+      startH: item.height ?? 120,
+      startPosX: item.posX ?? 0,
+      startPosY: item.posY ?? 0,
+    });
+  }, []);
+
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (dragging === null) return;
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
+
+    if (resizing !== null) {
+      const dx = e.clientX - resizing.startX;
+      const dy = e.clientY - resizing.startY;
+      let newW = resizing.startW;
+      let newH = resizing.startH;
+      let newPosX = resizing.startPosX;
+      let newPosY = resizing.startPosY;
+
+      if (resizing.dir === "se") {
+        newW = Math.max(MIN_W, resizing.startW + dx);
+        newH = Math.max(MIN_H, resizing.startH + dy);
+      } else if (resizing.dir === "sw") {
+        newW = Math.max(MIN_W, resizing.startW - dx);
+        newH = Math.max(MIN_H, resizing.startH + dy);
+        newPosX = resizing.startPosX + (resizing.startW - newW);
+      } else if (resizing.dir === "ne") {
+        newW = Math.max(MIN_W, resizing.startW + dx);
+        newH = Math.max(MIN_H, resizing.startH - dy);
+        newPosY = resizing.startPosY + (resizing.startH - newH);
+      } else if (resizing.dir === "nw") {
+        newW = Math.max(MIN_W, resizing.startW - dx);
+        newH = Math.max(MIN_H, resizing.startH - dy);
+        newPosX = resizing.startPosX + (resizing.startW - newW);
+        newPosY = resizing.startPosY + (resizing.startH - newH);
+      }
+
+      utils.inspiration.list.setData(undefined, (old) =>
+        old?.map(item => item.id === resizing.id
+          ? { ...item, width: newW, height: newH, posX: newPosX, posY: newPosY }
+          : item
+        )
+      );
+      return;
+    }
+
+    if (dragging === null) return;
     const newX = e.clientX - rect.left - dragOffset.x;
     const newY = e.clientY - rect.top - dragOffset.y;
     utils.inspiration.list.setData(undefined, (old) =>
       old?.map(item => item.id === dragging ? { ...item, posX: newX, posY: newY } : item)
     );
-  }, [dragging, dragOffset, utils]);
+  }, [dragging, dragOffset, resizing, utils]);
 
   const handleMouseUp = useCallback(() => {
+    if (resizing !== null) {
+      const item = items?.find(i => i.id === resizing.id);
+      if (item) {
+        updatePos.mutate({
+          id: resizing.id,
+          posX: item.posX ?? 0,
+          posY: item.posY ?? 0,
+          width: item.width ?? 200,
+          height: item.height ?? 120,
+        });
+      }
+      setResizing(null);
+      return;
+    }
     if (dragging === null) return;
     const item = items?.find(i => i.id === dragging);
     if (item) updatePos.mutate({ id: dragging, posX: item.posX ?? 0, posY: item.posY ?? 0 });
     setDragging(null);
-  }, [dragging, items, updatePos]);
+  }, [dragging, resizing, items, updatePos]);
 
   const handleCardClick = useCallback((e: React.MouseEvent, item: InspirationCard) => {
     e.stopPropagation();
-    if (dragging !== null) return;
+    if (dragging !== null || resizing !== null) return;
     setSelectedCard(prev => prev?.id === item.id ? null : item);
     setChatMessages([]);
-  }, [dragging]);
+  }, [dragging, resizing]);
 
   const handleSendQuestion = () => {
     if (!chatQuestion.trim() || !selectedCard) return;
@@ -159,6 +249,8 @@ export default function Inspiration() {
     );
   }
 
+  const activeCursor = resizing ? RESIZE_CURSORS[resizing.dir] : dragging !== null ? "cursor-grabbing" : "";
+
   return (
     <div className="min-h-screen flex flex-col" style={{ height: "calc(100vh - 56px)" }}>
       {/* Header */}
@@ -171,7 +263,7 @@ export default function Inspiration() {
             <h1 className="font-display text-2xl font-bold">灵感碰撞墙</h1>
           </div>
           <p className="text-muted-foreground text-sm ml-11">
-            自由拖拽灵感素材，点击便利贴向 AI 提问，自动生成灵感图片
+            自由拖拽灵感素材，拖拽四角调整大小，点击便利贴向 AI 提问
           </p>
         </div>
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -224,11 +316,10 @@ export default function Inspiration() {
         </Dialog>
       </div>
 
-      {/* Main area: canvas + sidebar */}
-      <div className="flex flex-1 gap-0 px-8 pb-0 overflow-hidden">
-        {/* Canvas */}
+      {/* Canvas */}
+      <div className="flex-1 mx-8 overflow-hidden">
         <div
-          className="flex-1 rounded-2xl border border-gray-200 relative overflow-hidden"
+          className={cn("w-full h-full rounded-2xl border border-gray-200 relative overflow-hidden", activeCursor)}
           style={{
             backgroundImage: "radial-gradient(circle, #d1d5db 1px, transparent 1px)",
             backgroundSize: "24px 24px",
@@ -259,29 +350,35 @@ export default function Inspiration() {
                 const tags = (item.styleTags as string[]) || [];
                 const isSelected = selectedCard?.id === item.id;
                 const isAIReply = item.title === "✨ AI 回复";
+                const cardW = item.width ?? 200;
+                const cardH = item.height ?? 120;
+
                 return (
                   <div
                     key={item.id}
                     className={cn(
-                      "absolute rounded-2xl border-2 p-3 cursor-pointer shadow-sm hover:shadow-md transition-all select-none",
-                      isSelected && "ring-2 ring-pink-400/60 shadow-lg scale-[1.02]",
-                      dragging === item.id && "shadow-xl scale-105 z-50",
-                      isAIReply && "border-blue-200 bg-blue-50"
+                      "absolute rounded-2xl border-2 p-3 shadow-sm hover:shadow-md transition-shadow select-none",
+                      isSelected && "ring-2 ring-pink-400/60 shadow-lg",
+                      dragging === item.id && "shadow-xl z-50",
+                      resizing?.id === item.id && "z-50",
+                      isAIReply && "border-blue-200"
                     )}
                     style={{
                       left: item.posX ?? 0,
                       top: item.posY ?? 0,
-                      width: item.width ?? 200,
-                      minHeight: item.height ?? 120,
+                      width: cardW,
+                      height: cardH,
                       backgroundColor: isAIReply ? "#eff6ff" : (item.color || "#ffffff"),
                       borderColor: isAIReply ? "#bfdbfe" : (CARD_COLORS.find(c => c.value === item.color)?.border || "#e5e7eb"),
-                      zIndex: dragging === item.id ? 50 : isSelected ? 10 : 1,
+                      zIndex: dragging === item.id || resizing?.id === item.id ? 50 : isSelected ? 10 : 1,
+                      overflow: "hidden",
                     }}
                     onMouseDown={(e) => handleMouseDown(e, item.id, item.posX ?? 0, item.posY ?? 0)}
                     onClick={(e) => handleCardClick(e, item as InspirationCard)}
                   >
+                    {/* Card header */}
                     <div className="flex items-start justify-between gap-1 mb-1.5">
-                      <Move className="w-3 h-3 text-gray-400 shrink-0 mt-0.5" />
+                      <Move className="w-3 h-3 text-gray-400 shrink-0 mt-0.5 cursor-grab" />
                       <div className="flex items-center gap-1">
                         {isSelected && !isAIReply && (
                           <span className="text-[9px] text-pink-500 font-medium flex items-center gap-0.5">
@@ -299,19 +396,21 @@ export default function Inspiration() {
                         )}
                       </div>
                     </div>
+
+                    {/* Card content */}
                     {item.title && (
                       <p className={cn("text-xs font-semibold mb-1 leading-tight", isAIReply ? "text-blue-700" : "text-gray-800")}>
                         {item.title}
                       </p>
                     )}
-                    {item.content && <p className="text-xs text-gray-600 leading-relaxed">{item.content}</p>}
+                    {item.content && <p className="text-xs text-gray-600 leading-relaxed overflow-hidden">{item.content}</p>}
                     {item.url && item.type === "link" && (
                       <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 underline break-all" onMouseDown={e => e.stopPropagation()}>
                         {item.url.slice(0, 40)}...
                       </a>
                     )}
                     {(item.imageUrl || (item.url && item.type === "image")) && (
-                      <img src={item.imageUrl || item.url || ""} alt="" className="w-full rounded-lg mt-1 object-cover max-h-32" />
+                      <img src={item.imageUrl || item.url || ""} alt="" className="w-full rounded-lg mt-1 object-cover" style={{ maxHeight: cardH - 60 }} />
                     )}
                     {tags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
@@ -322,6 +421,29 @@ export default function Inspiration() {
                         ))}
                       </div>
                     )}
+
+                    {/* ── Resize handles (4 corners) — always visible on selected, subtle otherwise ── */}
+                    {(["se", "sw", "ne", "nw"] as ResizeDir[]).map((dir) => {
+                      const isCornerSE = dir === "se";
+                      const isCornerSW = dir === "sw";
+                      const isCornerNE = dir === "ne";
+                      const isCornerNW = dir === "nw";
+                      return (
+                        <div
+                          key={dir}
+                          className={cn(
+                            "absolute w-3 h-3 rounded-sm border-2 border-white bg-pink-400 opacity-0 hover:opacity-100 transition-opacity z-30",
+                            isSelected && "opacity-70",
+                            RESIZE_CURSORS[dir],
+                            isCornerSE && "bottom-1 right-1",
+                            isCornerSW && "bottom-1 left-1",
+                            isCornerNE && "top-1 right-1",
+                            isCornerNW && "top-1 left-1",
+                          )}
+                          onMouseDown={(e) => handleResizeStart(e, item as InspirationCard, dir)}
+                        />
+                      );
+                    })}
                   </div>
                 );
               })}
@@ -408,7 +530,6 @@ export default function Inspiration() {
             ? "border-pink-300 bg-white shadow-[0_0_0_3px_rgba(236,72,153,0.08)]"
             : "border-gray-200 bg-gray-50"
         )}>
-          {/* Attachment button */}
           <button
             className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
             onClick={() => setShowAttachInput(v => !v)}

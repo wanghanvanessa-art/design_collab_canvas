@@ -483,10 +483,15 @@ const inspirationRouter = router({
     id: z.number(),
     posX: z.number(),
     posY: z.number(),
+    width: z.number().optional(),
+    height: z.number().optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
-    await db.update(inspirationItems).set({ posX: input.posX, posY: input.posY }).where(and(eq(inspirationItems.id, input.id), eq(inspirationItems.userId, ctx.user.id)));
+    const updateData: Record<string, number> = { posX: input.posX, posY: input.posY };
+    if (input.width !== undefined) updateData.width = input.width;
+    if (input.height !== undefined) updateData.height = input.height;
+    await db.update(inspirationItems).set(updateData).where(and(eq(inspirationItems.id, input.id), eq(inspirationItems.userId, ctx.user.id)));
     return { success: true };
   }),
 
@@ -534,8 +539,18 @@ const inspirationRouter = router({
       ],
     });
 
-    const answer = llmRes.choices[0]?.message?.content || "暂无回答";
-    const answerText = typeof answer === "string" ? answer : JSON.stringify(answer);
+    const rawAnswer = llmRes.choices[0]?.message?.content || "暂无回答";
+    const rawText = typeof rawAnswer === "string" ? rawAnswer : JSON.stringify(rawAnswer);
+    // Strip thinking process: remove <think>...</think> blocks and keep only the final answer
+    let answerText = rawText;
+    // Remove <think>...</think> blocks (including nested)
+    answerText = answerText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    // Also handle cases where model outputs thinking without closing tag (truncated)
+    const thinkStart = answerText.indexOf("<think>");
+    if (thinkStart !== -1) {
+      answerText = answerText.slice(0, thinkStart).trim();
+    }
+    if (!answerText) answerText = "暂无回答";
 
     // Generate an inspiration image based on the question
     let generatedImageUrl: string | null = null;
