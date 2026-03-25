@@ -216,50 +216,108 @@ function ProgressTodosCard({
 }
 
 // ─── Blindbox Card ────────────────────────────────────────────────────────────
+const BLINDBOX_TYPE_CONFIG: Record<string, { label: string; emoji: string; color: string }> = {
+  case:      { label: "优秀案例", emoji: "🎨", color: "text-violet-600 bg-violet-100" },
+  knowledge: { label: "设计知识", emoji: "📚", color: "text-blue-600 bg-blue-100" },
+  tip:       { label: "实用技巧", emoji: "⚡", color: "text-amber-600 bg-amber-100" },
+  quote:     { label: "设计语录", emoji: "✨", color: "text-pink-600 bg-pink-100" },
+};
+
 function BlindboxCard() {
   const [open, setOpen] = useState(false);
+  const [shaking, setShaking] = useState(false);
   const draw = trpc.blindbox.draw.useMutation();
 
   const handleOpen = () => {
+    if (draw.isPending) return;
     if (!open) {
+      setShaking(true);
+      setTimeout(() => setShaking(false), 600);
       draw.mutate(undefined, { onSuccess: () => setOpen(true) });
     } else {
       setOpen(false);
     }
   };
 
+  const typeCfg = draw.data?.type
+    ? (BLINDBOX_TYPE_CONFIG[draw.data.type] ?? BLINDBOX_TYPE_CONFIG.knowledge)
+    : null;
+
   return (
     <div
       onClick={handleOpen}
-      className="rounded-[20px] bg-white border border-amber-100 shadow-sm p-5 cursor-pointer transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 flex flex-col justify-between min-h-[110px]"
+      className="rounded-[20px] border shadow-sm cursor-pointer transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 flex flex-col justify-between min-h-[110px] overflow-hidden relative"
+      style={{
+        background: open && draw.data
+          ? "linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)"
+          : "linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4c1d95 100%)",
+        borderColor: open && draw.data ? "#fde68a" : "#312e81",
+      }}
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-xl bg-amber-50 flex items-center justify-center">
-            <Gift className="w-3.5 h-3.5 text-amber-500" />
-          </div>
-          <span className="text-[10px] font-semibold text-amber-600 uppercase tracking-wider">灵感盲盒</span>
-        </div>
-        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-      </div>
-      {open && draw.data ? (
-        <div className="flex-1 py-2">
-          <p className="text-sm font-semibold text-gray-800 mb-1 line-clamp-1">{draw.data.title}</p>
-          <p className="text-xs text-gray-500 line-clamp-2">{draw.data.content}</p>
-        </div>
-      ) : (
-        <div className="flex flex-col items-center justify-center text-center py-1">
-          <div className="text-2xl mb-1 animate-bounce">🎁</div>
-          <p className="text-sm font-semibold text-gray-700">点击开盒</p>
-          <p className="text-[10px] text-gray-400 mt-0.5">随机设计灵感</p>
+      {/* Decorative dots */}
+      {!open && (
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          {["top-2 right-8", "top-6 right-3", "bottom-8 right-6", "bottom-3 right-12", "top-10 right-16"].map((pos, i) => (
+            <div key={i} className={`absolute ${pos} w-1 h-1 rounded-full bg-white/20`} />
+          ))}
+          <div className="absolute top-0 left-0 w-20 h-20 rounded-full bg-purple-500/10 -translate-x-8 -translate-y-8" />
+          <div className="absolute bottom-0 right-0 w-16 h-16 rounded-full bg-indigo-400/10 translate-x-6 translate-y-6" />
         </div>
       )}
-      <Link href="/blindbox" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-1 pt-2.5 border-t border-amber-50 mt-2">
-          <span className="text-[10px] font-semibold text-amber-600">更多盲盒</span>
-          <ArrowRight className="w-3 h-3 text-amber-600" />
+
+      <div className="p-4 flex flex-col h-full relative z-10">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <div className={cn(
+              "w-6 h-6 rounded-lg flex items-center justify-center",
+              open && draw.data ? "bg-amber-200" : "bg-white/15"
+            )}>
+              <Gift className={cn("w-3.5 h-3.5", open && draw.data ? "text-amber-600" : "text-white")} />
+            </div>
+            <span className={cn(
+              "text-[10px] font-bold uppercase tracking-wider",
+              open && draw.data ? "text-amber-600" : "text-white/80"
+            )}>灵感盲盒</span>
+          </div>
+          <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
         </div>
-      </Link>
+
+        {/* Content area */}
+        {open && draw.data ? (
+          <div className="flex-1 flex flex-col justify-between">
+            <div>
+              {typeCfg && (
+                <span className={cn("inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full mb-1.5", typeCfg.color)}>
+                  {typeCfg.emoji} {typeCfg.label}
+                </span>
+              )}
+              <p className="text-xs font-bold text-gray-800 line-clamp-1 leading-snug">{draw.data.title}</p>
+              <p className="text-[11px] text-gray-500 line-clamp-2 mt-0.5 leading-relaxed">{draw.data.content}</p>
+            </div>
+            <Link href="/blindbox" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-1 pt-2 border-t border-amber-200 mt-1.5">
+                <span className="text-[10px] font-semibold text-amber-600">再来一个</span>
+                <ArrowRight className="w-3 h-3 text-amber-600" />
+              </div>
+            </Link>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-center gap-1.5">
+            <div className={cn(
+              "text-3xl transition-transform duration-300",
+              shaking ? "animate-bounce" : "",
+              draw.isPending ? "opacity-50" : ""
+            )}>
+              {draw.isPending ? "⏳" : "🎁"}
+            </div>
+            <p className="text-sm font-bold text-white">
+              {draw.isPending ? "开盒中...✨" : "点击开盒"}
+            </p>
+            <p className="text-[10px] text-white/50">随机设计灵感</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
