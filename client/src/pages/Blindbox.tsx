@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { BookOpen, Lightbulb, Star, Zap, RefreshCw, Loader2, Sparkles } from "lucide-react";
+import { BackButton } from "@/components/BackButton";
 
 // ─── Type config ──────────────────────────────────────────────────────────────
 const typeConfig: Record<string, { label: string; icon: any; color: string; bg: string; accent: string }> = {
@@ -140,6 +141,7 @@ export default function Blindbox() {
 
   return (
     <div className="pb-8">
+      <BackButton />
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center gap-2.5 mb-2">

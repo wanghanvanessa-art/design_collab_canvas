@@ -195,11 +195,11 @@ export default function IdeaDetail({ id }: { id: number }) {
       <div className="shrink-0 bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-4 sticky top-0 z-30">
         {/* Back + Title */}
         <button
-          onClick={() => navigate("/ideas")}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors shrink-0"
+          onClick={() => navigate("/")}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors shrink-0 group"
         >
-          <ArrowLeft className="w-4 h-4" />
-          <span className="hidden sm:inline">返回</span>
+          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+          <span className="hidden sm:inline">返回主页</span>
         </button>
 
         <div className="w-px h-5 bg-gray-200 shrink-0" />

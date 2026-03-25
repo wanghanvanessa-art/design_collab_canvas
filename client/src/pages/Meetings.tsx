@@ -15,6 +15,7 @@ import {
   ChevronDown, Loader2, FileAudio, Trash2, AlertCircle,
   Sparkles, ListTodo, ArrowRight
 } from "lucide-react";
+import { BackButton } from "@/components/BackButton";
 
 const priorityConfig = {
   high: { label: "高优先级", class: "priority-high", dot: "bg-red-400" },
@@ -117,6 +118,7 @@ export default function Meetings() {
 
   return (
     <div className="pb-8">
+      <BackButton />
       {/* Header */}
       <div className="flex items-start justify-between mb-8">
         <div>

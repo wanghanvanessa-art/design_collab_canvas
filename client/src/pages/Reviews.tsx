@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { ClipboardCheck, Upload, Loader2, Star, CheckCircle, AlertCircle, Info, X, GitCompare, Image as ImageIcon } from "lucide-react";
+import { BackButton } from "@/components/BackButton";
 
 function ScoreRing({ score, label, color }: { score: number; label: string; color: string }) {
   const r = 28;
@@ -109,6 +110,7 @@ export default function Reviews() {
 
   return (
     <div className="pb-8">
+      <BackButton />
       <div className="flex items-start justify-between mb-8">
         <div>
           <div className="flex items-center gap-2.5 mb-2">

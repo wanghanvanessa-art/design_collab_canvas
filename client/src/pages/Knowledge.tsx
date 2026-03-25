@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { BookOpen, Plus, Search, Tag, Clock, Users, Edit3, Loader2, X, GitBranch, Save } from "lucide-react";
+import { BackButton } from "@/components/BackButton";
 
 export default function Knowledge() {
   const { isAuthenticated } = useAuth();
@@ -63,6 +64,7 @@ export default function Knowledge() {
 
   return (
     <div className="pb-8">
+      <BackButton />
       <div className="flex items-start justify-between mb-8">
         <div>
           <div className="flex items-center gap-2.5 mb-2">

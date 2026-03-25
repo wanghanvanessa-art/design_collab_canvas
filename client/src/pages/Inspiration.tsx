@@ -11,6 +11,7 @@ import {
   Sparkles, Plus, Loader2, Link2, Type, Image, X, Move, Tag,
   Send, Paperclip, MessageSquare,
 } from "lucide-react";
+import { BackButton } from "@/components/BackButton";
 
 const CARD_COLORS = [
   { name: "黄色", value: "#fef9c3", border: "#fef08a" },
@@ -254,8 +255,9 @@ export default function Inspiration() {
   return (
     <div className="min-h-screen flex flex-col" style={{ height: "calc(100vh - 56px)" }}>
       {/* Header */}
-      <div className="flex items-start justify-between px-8 pt-6 pb-4 shrink-0">
+      <div className="flex items-start justify-between px-8 pt-4 pb-4 shrink-0">
         <div>
+          <BackButton />
           <div className="flex items-center gap-2.5 mb-1">
             <div className="w-9 h-9 rounded-xl bg-pink-100 flex items-center justify-center">
               <Sparkles className="w-5 h-5 text-pink-600" />
