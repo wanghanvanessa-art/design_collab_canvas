@@ -67,7 +67,7 @@ export default function Blindbox() {
   const typeInfo = currentItem ? (typeConfig[currentItem.type] || typeConfig.tip) : null;
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="pb-8">
       {/* Header */}
       <div className="mb-10">
         <div className="flex items-center gap-2.5 mb-2">

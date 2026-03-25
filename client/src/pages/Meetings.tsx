@@ -116,7 +116,7 @@ export default function Meetings() {
   const doneTodos = todos?.filter(t => t.completed) || [];
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="pb-8">
       {/* Header */}
       <div className="flex items-start justify-between mb-8">
         <div>

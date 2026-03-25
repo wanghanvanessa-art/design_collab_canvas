@@ -63,7 +63,7 @@ export default function Ideas() {
   const tagColors = ["bg-violet-100 text-violet-700", "bg-emerald-100 text-emerald-700", "bg-amber-100 text-amber-700", "bg-sky-100 text-sky-700", "bg-pink-100 text-pink-700"];
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="pb-8">
       <div className="flex items-start justify-between mb-8">
         <div>
           <div className="flex items-center gap-2.5 mb-2">

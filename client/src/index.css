@@ -236,6 +236,10 @@
   0%, 100% { transform: rotate(0deg); }
   50% { transform: rotate(-8deg); }
 }
+@keyframes bento-in {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 @keyframes blindbox-shake {
   0%, 100% { transform: rotate(0deg); }
   15% { transform: rotate(-5deg); }

@@ -50,7 +50,7 @@ export default function Interviews() {
   }
 
   return (
-    <div className="min-h-screen p-8">
+    <div className="pb-8">
       <div className="flex items-start justify-between mb-8">
         <div>
           <div className="flex items-center gap-2.5 mb-2">
