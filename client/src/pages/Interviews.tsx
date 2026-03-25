@@ -72,7 +72,7 @@ export default function Interviews() {
               <Input placeholder="受访者姓名/角色" value={form.interviewee} onChange={e => setForm(p => ({ ...p, interviewee: e.target.value }))} className="rounded-xl" />
               <Input type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="rounded-xl" />
               <Textarea placeholder="访谈内容记录..." value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} className="rounded-xl min-h-40 resize-none" />
-              <Button className="w-full rounded-xl" onClick={() => create.mutate({ title: form.title, interviewee: form.interviewee, content: form.content, date: form.date ? new Date(form.date).getTime() : undefined })} disabled={create.isPending}>
+              <Button className="w-full rounded-xl" onClick={() => create.mutate({ title: form.title, interviewee: form.interviewee, content: form.content, date: form.date || undefined })} disabled={create.isPending}>
                 {create.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}创建访谈
               </Button>
             </div>
@@ -109,7 +109,7 @@ export default function Interviews() {
                   </Badge>
                 </div>
                 {iv.interviewee && <p className="text-xs text-muted-foreground mt-1">受访者：{iv.interviewee}</p>}
-                {iv.date && <p className="text-xs text-muted-foreground">{new Date(iv.date).toLocaleDateString("zh-CN")}</p>}
+                {iv.date && <p className="text-xs text-muted-foreground">{iv.date}</p>}
                 {(iv.audienceLabels as string[])?.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-2">
                     {(iv.audienceLabels as string[]).slice(0, 3).map((label) => (

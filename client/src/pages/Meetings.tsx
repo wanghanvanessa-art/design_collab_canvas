@@ -147,7 +147,7 @@ export default function Meetings() {
                 </Select>
                 <Input placeholder="责任人（可选）" value={newTodo.assignee} onChange={e => setNewTodo(p => ({ ...p, assignee: e.target.value }))} className="rounded-xl" />
                 <Input type="date" value={newTodo.dueDate} onChange={e => setNewTodo(p => ({ ...p, dueDate: e.target.value }))} className="rounded-xl" />
-                <Button className="w-full rounded-xl" onClick={() => createTodo.mutate({ title: newTodo.title, priority: newTodo.priority, assignee: newTodo.assignee || undefined, dueDate: newTodo.dueDate ? new Date(newTodo.dueDate).getTime() : undefined })} disabled={createTodo.isPending}>
+                <Button className="w-full rounded-xl" onClick={() => createTodo.mutate({ title: newTodo.title, priority: newTodo.priority, assignee: newTodo.assignee || undefined, dueDate: newTodo.dueDate || undefined })} disabled={createTodo.isPending}>
                   {createTodo.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}创建待办
                 </Button>
               </div>
@@ -285,7 +285,7 @@ export default function Meetings() {
                         )}
                         {todo.dueDate && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                            <Clock className="w-3 h-3" />{new Date(todo.dueDate).toLocaleDateString("zh-CN")}
+                            <Clock className="w-3 h-3" />{todo.dueDate}
                           </span>
                         )}
                       </div>

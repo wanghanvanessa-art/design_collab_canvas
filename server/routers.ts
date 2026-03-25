@@ -157,7 +157,7 @@ const todosRouter = router({
     title: z.string().min(1),
     priority: z.enum(["high", "medium", "low"]).default("medium"),
     assignee: z.string().optional(),
-    dueDate: z.number().optional(),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
@@ -166,7 +166,7 @@ const todosRouter = router({
       title: input.title,
       priority: input.priority,
       assignee: input.assignee || null,
-      dueDate: input.dueDate ? new Date(input.dueDate) : null,
+      dueDate: input.dueDate || null,
       sourceType: "manual",
     });
     return { success: true };
@@ -288,7 +288,7 @@ const interviewsRouter = router({
     title: z.string().min(1),
     interviewee: z.string().optional(),
     content: z.string().optional(),
-    date: z.number().optional(),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
@@ -297,7 +297,7 @@ const interviewsRouter = router({
       title: input.title,
       interviewee: input.interviewee || null,
       content: input.content || null,
-      date: input.date ? new Date(input.date) : null,
+      date: input.date || null,
       status: "draft",
     });
     return { success: true };

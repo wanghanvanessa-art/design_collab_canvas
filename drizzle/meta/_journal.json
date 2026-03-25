@@ -22,6 +22,13 @@
       "when": 1774418484898,
       "tag": "0002_good_elektra",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1774421647514,
+      "tag": "0003_overrated_swarm",
+      "breakpoints": true
     }
   ]
 }
