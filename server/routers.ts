@@ -497,6 +497,78 @@ const inspirationRouter = router({
     return { success: true };
   }),
 
+  askAI: protectedProcedure.input(z.object({
+    cardId: z.number(),
+    question: z.string().min(1),
+    attachmentUrls: z.array(z.string()).optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+
+    // Get the target card
+    const [card] = await db.select().from(inspirationItems).where(
+      and(eq(inspirationItems.id, input.cardId), eq(inspirationItems.userId, ctx.user.id))
+    );
+    if (!card) throw new Error("Card not found");
+
+    const cardContext = [
+      card.title ? `标题：${card.title}` : "",
+      card.content ? `内容：${card.content}` : "",
+      card.url ? `链接：${card.url}` : "",
+    ].filter(Boolean).join("\n");
+
+    // Build messages with optional image attachments
+    const userContent: any[] = [
+      { type: "text", text: `下面是一张灵感便利贴的内容：\n${cardContext}\n\n用户问题：${input.question}` },
+    ];
+    if (input.attachmentUrls && input.attachmentUrls.length > 0) {
+      for (const url of input.attachmentUrls) {
+        userContent.push({ type: "image_url", image_url: { url, detail: "auto" } });
+      }
+    }
+
+    const llmRes = await invokeLLM({
+      messages: [
+        { role: "system", content: "你是一个专业设计顾问和灵感探索助手。用户会就一张灵感便利贴提问，请给出具体、实用的回答和设计建议。回答要简洁清晰，100-200字为宜。" },
+        { role: "user", content: userContent },
+      ],
+    });
+
+    const answer = llmRes.choices[0]?.message?.content || "暂无回答";
+    const answerText = typeof answer === "string" ? answer : JSON.stringify(answer);
+
+    // Generate an inspiration image based on the question
+    let generatedImageUrl: string | null = null;
+    try {
+      const { generateImage } = await import("./_core/imageGeneration");
+      const imagePrompt = `Design inspiration: ${input.question}. Style: modern, clean, professional design reference image`;
+      const imgResult = await generateImage({ prompt: imagePrompt });
+      generatedImageUrl = imgResult.url || null;
+    } catch {
+      // Image generation is optional
+    }
+
+    // Save the AI reply as a new inspiration card near the original
+    const replyCard = await db.insert(inspirationItems).values({
+      userId: ctx.user.id,
+      type: generatedImageUrl ? "image" : "text",
+      title: `✨ AI 回复`,
+      content: answerText,
+      url: generatedImageUrl || null,
+      imageUrl: generatedImageUrl || null,
+      color: "#f0f9ff",
+      posX: (card.posX ?? 0) + 220,
+      posY: card.posY ?? 0,
+      styleTags: [],
+    });
+
+    return {
+      answer: answerText,
+      imageUrl: generatedImageUrl,
+      replyCardId: (replyCard as any).insertId as number,
+    };
+  }),
+
   generateTags: protectedProcedure.input(z.object({})).mutation(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
@@ -675,6 +747,25 @@ const BUILTIN_BLINDBOX = [
 ];
 
 const blindboxRouter = router({
+  saveToKnowledge: protectedProcedure.input(z.object({
+    title: z.string().min(1),
+    content: z.string().min(1),
+    tags: z.array(z.string()).optional(),
+    category: z.string().optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    await db.insert(knowledgeArticles).values({
+      userId: ctx.user.id,
+      title: input.title,
+      content: input.content,
+      tags: input.tags || [],
+      category: input.category || "灵感盲盒",
+      version: 1,
+    });
+    return { success: true };
+  }),
+
   draw: protectedProcedure.input(z.void().optional()).mutation(async ({ ctx }) => {
     const db = await getDb();
 

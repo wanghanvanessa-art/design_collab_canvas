@@ -30,6 +30,11 @@ export default function Blindbox() {
   const [currentItem, setCurrentItem] = useState<any>(null);
   const [colorIdx, setColorIdx] = useState(0);
 
+  const saveToKnowledge = trpc.blindbox.saveToKnowledge.useMutation({
+    onSuccess: () => toast.success("已成功收藏到知识库！"),
+    onError: () => toast.error("收藏失败，请重试"),
+  });
+
   const draw = trpc.blindbox.draw.useMutation({
     onSuccess: (data) => {
       setCurrentItem(data);
@@ -176,8 +181,24 @@ export default function Blindbox() {
                 <RefreshCw className="w-4 h-4" />
                 再抽一次
               </Button>
-              <Button className="flex-1 rounded-xl gap-2" onClick={() => { toast.success("已收藏到知识库！"); }}>
-                <BookOpen className="w-4 h-4" />
+              <Button
+                className="flex-1 rounded-xl gap-2"
+                disabled={saveToKnowledge.isPending}
+                onClick={() => {
+                  if (!currentItem) return;
+                  saveToKnowledge.mutate({
+                    title: currentItem.title,
+                    content: currentItem.content || currentItem.title,
+                    tags: currentItem.tags || [],
+                    category: "灵感盲盒",
+                  });
+                }}
+              >
+                {saveToKnowledge.isPending ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <BookOpen className="w-4 h-4" />
+                )}
                 收藏到知识库
               </Button>
             </div>

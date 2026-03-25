@@ -83,9 +83,10 @@ function LargeFeatureCard({ f }: { f: typeof FEATURES[0] }) {
   return (
     <Link href={f.href} className="group block h-full">
       <div className="relative h-full min-h-[200px] rounded-[24px] bg-white overflow-hidden cursor-pointer border border-gray-100 shadow-sm transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5">
-        {/* Accent top strip — only visible on hover */}
+        {/* Accent top strip — solid color, only visible on hover */}
         <div
-          className={cn("h-1 w-full transition-opacity duration-300 opacity-0 group-hover:opacity-100", f.accentCls)}
+          className="h-1 w-full transition-opacity duration-300 opacity-0 group-hover:opacity-100"
+          style={{ backgroundColor: f.accent }}
         />
         <div className="p-6 h-full flex flex-col">
           <div className="flex items-start justify-between mb-4">
@@ -116,9 +117,10 @@ function SmallFeatureCard({ f }: { f: typeof FEATURES[0] }) {
   return (
     <Link href={f.href} className="group block h-full">
       <div className="relative h-full min-h-[110px] rounded-[20px] bg-white overflow-hidden cursor-pointer border border-gray-100 shadow-sm transition-all duration-300 hover:shadow-md hover:-translate-y-0.5">
-        {/* Accent left strip — only visible on hover */}
+        {/* Accent left strip — solid color, only visible on hover */}
         <div
-          className={cn("absolute left-0 top-4 bottom-4 w-0.5 rounded-full transition-opacity duration-300 opacity-0 group-hover:opacity-100", f.accentCls)}
+          className="absolute left-0 top-4 bottom-4 w-0.5 rounded-full transition-opacity duration-300 opacity-0 group-hover:opacity-100"
+          style={{ backgroundColor: f.accent }}
         />
         <div className="p-5 pl-6 h-full flex flex-col">
           <div className="flex items-center justify-between mb-2.5">
@@ -279,8 +281,11 @@ function InspirationWallCard() {
       <div
         className="relative h-full min-h-[200px] rounded-[24px] bg-white overflow-hidden cursor-pointer border border-gray-100 shadow-sm transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5"
       >
-        {/* Accent top strip — only visible on hover */}
-        <div className={cn("h-1 w-full transition-opacity duration-300 opacity-0 group-hover:opacity-100", f.accentCls)} />
+        {/* Accent top strip — solid color, only visible on hover */}
+        <div
+          className="h-1 w-full transition-opacity duration-300 opacity-0 group-hover:opacity-100"
+          style={{ backgroundColor: f.accent }}
+        />
 
         {/* Dot grid background — only on right canvas half */}
         <div

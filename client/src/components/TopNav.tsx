@@ -11,17 +11,28 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LogOut, Gift, LayoutGrid, Search, Sparkles, ArrowRight, Loader2 } from "lucide-react";
+import {
+  LogOut, Gift, LayoutGrid, Sparkles, ArrowRight, Loader2,
+  Mic2, Lightbulb, Users, BookOpen, Layers, Search,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// Quick navigation suggestions for AI search
+const NAV_ITEMS = [
+  { href: "/meetings",    label: "会议转待办",   icon: Mic2,      accent: "text-violet-600", hover: "hover:text-violet-600 hover:bg-violet-50" },
+  { href: "/ideas",       label: "想法落地页",   icon: Lightbulb, accent: "text-amber-600",  hover: "hover:text-amber-600 hover:bg-amber-50" },
+  { href: "/interviews",  label: "用户访谈",     icon: Users,     accent: "text-emerald-600",hover: "hover:text-emerald-600 hover:bg-emerald-50" },
+  { href: "/knowledge",   label: "设计知识库",   icon: BookOpen,  accent: "text-blue-600",   hover: "hover:text-blue-600 hover:bg-blue-50" },
+  { href: "/inspiration", label: "灵感碰撞墙",   icon: Layers,    accent: "text-pink-600",   hover: "hover:text-pink-600 hover:bg-pink-50" },
+  { href: "/reviews",     label: "方案评审",     icon: Search,    accent: "text-indigo-600", hover: "hover:text-indigo-600 hover:bg-indigo-50" },
+];
+
 const QUICK_SUGGESTIONS = [
-  { label: "上传会议录音", href: "/meetings", icon: "🎙️" },
-  { label: "发布新想法", href: "/ideas", icon: "💡" },
-  { label: "添加访谈记录", href: "/interviews", icon: "👥" },
-  { label: "查找设计规范", href: "/knowledge", icon: "📚" },
-  { label: "灵感碰撞墙", href: "/inspiration", icon: "✨" },
-  { label: "发起设计评审", href: "/reviews", icon: "🔍" },
+  { label: "上传会议录音", href: "/meetings",    icon: "🎙️" },
+  { label: "发布新想法",   href: "/ideas",       icon: "💡" },
+  { label: "添加访谈记录", href: "/interviews",  icon: "👥" },
+  { label: "查找设计规范", href: "/knowledge",   icon: "📚" },
+  { label: "灵感碰撞墙",   href: "/inspiration", icon: "✨" },
+  { label: "发起设计评审", href: "/reviews",     icon: "🔍" },
 ];
 
 function AISearchBar() {
@@ -33,7 +44,6 @@ function AISearchBar() {
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -51,7 +61,6 @@ function AISearchBar() {
     setLoading(true);
     setAiResult(null);
     try {
-      // Simple keyword routing
       const q = query.toLowerCase();
       if (q.includes("会议") || q.includes("录音") || q.includes("待办")) {
         setAiResult("🎙️ 建议前往「会议转待办」，上传录音即可自动生成待办清单。");
@@ -77,45 +86,41 @@ function AISearchBar() {
     ? QUICK_SUGGESTIONS.filter(s => s.label.includes(query))
     : QUICK_SUGGESTIONS;
 
-  const showDropdown = focused && (query.length > 0 || true);
-
   return (
-    <div ref={containerRef} className="relative flex-1 max-w-[480px]">
+    <div ref={containerRef} className="relative w-[260px] shrink-0">
       <form onSubmit={handleSearch}>
         <div className={cn(
-          "flex items-center gap-2 px-3.5 py-2 rounded-2xl border transition-all duration-200",
+          "flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all duration-200",
           focused
             ? "border-violet-300 bg-white shadow-[0_0_0_3px_rgba(124,58,237,0.08)]"
             : "border-gray-200 bg-gray-50 hover:border-gray-300"
         )}>
           {loading ? (
-            <Loader2 className="w-4 h-4 text-violet-400 animate-spin shrink-0" />
+            <Loader2 className="w-3.5 h-3.5 text-violet-400 animate-spin shrink-0" />
           ) : (
-            <Sparkles className="w-4 h-4 text-violet-400 shrink-0" />
+            <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
           )}
           <input
             ref={inputRef}
             value={query}
             onChange={e => setQuery(e.target.value)}
             onFocus={() => setFocused(true)}
-            placeholder="AI 搜索：想法、访谈、设计稿、知识..."
+            placeholder="AI 搜索..."
             className="flex-1 bg-transparent text-sm text-gray-700 placeholder:text-gray-400 outline-none min-w-0"
           />
           {query && (
             <button
               type="submit"
-              className="shrink-0 w-6 h-6 rounded-lg bg-violet-500 flex items-center justify-center hover:bg-violet-600 transition-colors"
+              className="shrink-0 w-5 h-5 rounded-md bg-violet-500 flex items-center justify-center hover:bg-violet-600 transition-colors"
             >
-              <ArrowRight className="w-3.5 h-3.5 text-white" />
+              <ArrowRight className="w-3 h-3 text-white" />
             </button>
           )}
         </div>
       </form>
 
-      {/* Dropdown */}
-      {showDropdown && (
+      {focused && (
         <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl border border-gray-100 shadow-xl shadow-gray-200/60 z-50 overflow-hidden">
-          {/* AI Result */}
           {aiResult && (
             <div className="px-4 py-3 bg-violet-50 border-b border-violet-100">
               <div className="flex items-start gap-2">
@@ -124,7 +129,6 @@ function AISearchBar() {
               </div>
             </div>
           )}
-          {/* Quick links */}
           <div className="p-2">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-2 py-1.5">
               {query ? "匹配功能" : "快速跳转"}
@@ -149,6 +153,7 @@ function AISearchBar() {
 
 export default function TopNav() {
   const { user, isAuthenticated, logout } = useAuth();
+  const [location] = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const logoutMutation = trpc.auth.logout.useMutation({
@@ -157,20 +162,43 @@ export default function TopNav() {
 
   return (
     <header className="sticky top-0 z-50 w-full bg-white/90 backdrop-blur-xl border-b border-gray-100">
-      <div className="max-w-[1400px] mx-auto px-6 h-14 flex items-center gap-4">
+      <div className="max-w-[1440px] mx-auto px-6 h-14 flex items-center gap-4">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
             <LayoutGrid className="w-4 h-4 text-white" />
           </div>
-          <span className="font-display font-bold text-base text-foreground tracking-tight hidden sm:block">Design Canvas</span>
+          <span className="font-display font-bold text-base text-foreground tracking-tight hidden md:block">Design Canvas</span>
         </Link>
 
-        {/* AI Search Bar — center, takes most space */}
-        <AISearchBar />
+        {/* Six main nav items */}
+        <nav className="hidden lg:flex items-center gap-0.5 flex-1">
+          {NAV_ITEMS.map(item => {
+            const Icon = item.icon;
+            const active = location === item.href;
+            return (
+              <Link key={item.href} href={item.href}>
+                <button
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium transition-all duration-150",
+                    active
+                      ? cn("bg-gray-100", item.accent)
+                      : cn("text-gray-500", item.hover)
+                  )}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{item.label}</span>
+                </button>
+              </Link>
+            );
+          })}
+        </nav>
 
-        {/* Right Side */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right side: AI search + Blindbox + Avatar */}
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
+          {/* AI Search Bar */}
+          <AISearchBar />
+
           {/* Blindbox */}
           <Link href="/blindbox">
             <Button variant="ghost" size="sm" className="rounded-xl gap-1.5 text-amber-600 hover:bg-amber-50 hover:text-amber-700 px-3">
