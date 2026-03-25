@@ -8,7 +8,7 @@ import { transcribeAudio } from "./_core/voiceTranscription";
 import { getDb } from "./db";
 import {
   meetings, todos, ideas, ideaComments, interviews,
-  knowledgeArticles, inspirationItems, designReviews, blindboxItems
+  knowledgeArticles, inspirationItems, designReviews, blindboxItems, activities
 } from "../drizzle/schema";
 import { eq, and, like, or, desc, isNull } from "drizzle-orm";
 
@@ -695,6 +695,37 @@ const blindboxRouter = router({
   }),
 });
 
+// ─── Activities Router ──────────────────────────────────────────────────────
+const activitiesRouter = router({
+  list: publicProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return [];
+    const rows = await db.select().from(activities).orderBy(desc(activities.createdAt)).limit(20);
+    return rows;
+  }),
+  create: protectedProcedure
+    .input(z.object({
+      type: z.enum(["todo_done", "idea_posted", "review_passed", "interview_added", "knowledge_added", "inspiration_added"]),
+      title: z.string().min(1).max(255),
+      detail: z.string().optional(),
+      refId: z.number().optional(),
+      refType: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      await db.insert(activities).values({
+        userId: ctx.user.id,
+        userName: ctx.user.name || "团队成员",
+        type: input.type,
+        title: input.title,
+        detail: input.detail,
+        refId: input.refId,
+        refType: input.refType,
+      });
+      return { success: true };
+    }),
+});
 // ─── App Router ───────────────────────────────────────────────────────────────
 export const appRouter = router({
   system: systemRouter,
@@ -707,6 +738,7 @@ export const appRouter = router({
   inspiration: inspirationRouter,
   reviews: reviewsRouter,
   blindbox: blindboxRouter,
+  activities: activitiesRouter,
 });
 
 export type AppRouter = typeof appRouter;

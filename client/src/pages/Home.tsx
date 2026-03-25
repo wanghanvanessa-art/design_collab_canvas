@@ -8,7 +8,8 @@ import PixelCat from "@/components/PixelCat";
 import {
   Mic2, Lightbulb, Users, BookOpen, Sparkles, Search,
   ArrowRight, Gift, CheckCircle2, Clock, TrendingUp, Star,
-  Zap, FileText, MessageSquare, Brain
+  Zap, FileText, MessageSquare, Brain, ChevronDown, ChevronUp,
+  CheckCheck, PenLine, ShieldCheck, UserPlus, Library, Layers
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -282,6 +283,115 @@ function QuoteCard() {
 }
 
 // ─── Left Hero — no card background, just text on page bg ────────────────────
+// ─── Team Timeline Card ──────────────────────────────────────────────────────
+const ACTIVITY_ICONS: Record<string, { icon: React.ElementType; color: string; bg: string; label: string }> = {
+  todo_done:        { icon: CheckCheck,   color: "text-emerald-600", bg: "bg-emerald-50",  label: "完成待办" },
+  idea_posted:      { icon: PenLine,      color: "text-amber-600",   bg: "bg-amber-50",    label: "发表想法" },
+  review_passed:    { icon: ShieldCheck,  color: "text-violet-600",  bg: "bg-violet-50",   label: "评审通过" },
+  interview_added:  { icon: UserPlus,     color: "text-blue-600",    bg: "bg-blue-50",     label: "新增访谈" },
+  knowledge_added:  { icon: Library,      color: "text-indigo-600",  bg: "bg-indigo-50",   label: "知识沉淀" },
+  inspiration_added:{ icon: Layers,       color: "text-pink-600",    bg: "bg-pink-50",     label: "灵感添加" },
+};
+
+// Mock data for when DB is empty
+const MOCK_ACTIVITIES = [
+  { id: 1, userName: "jinhui",   type: "todo_done",         title: "梗理访谈记录",         detail: "已完成本周第 3 项高优先级待办",   createdAt: new Date(Date.now() - 1000 * 60 * 15) },
+  { id: 2, userName: "小 A",     type: "idea_posted",       title: "新组件方案",             detail: "提出了一种新的导航组件交互方式",   createdAt: new Date(Date.now() - 1000 * 60 * 42) },
+  { id: 3, userName: "设计团队",  type: "review_passed",     title: "首页改版设计稿",         detail: "Accessibility 得分 92，交互一致性 88",  createdAt: new Date(Date.now() - 1000 * 60 * 90) },
+  { id: 4, userName: "jinhui",   type: "interview_added",   title: "用户访谈 #12 记录",      detail: "访谈了 3 位中台运营同学",         createdAt: new Date(Date.now() - 1000 * 60 * 180) },
+  { id: 5, userName: "小 B",     type: "knowledge_added",   title: "B 端表单设计规范 v2",   detail: "更新了表单验证规则和错误提示模式",  createdAt: new Date(Date.now() - 1000 * 60 * 240) },
+];
+
+function formatRelativeTime(date: Date): string {
+  const diff = Date.now() - date.getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "刚刚";
+  if (mins < 60) return `${mins} 分钟前`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return `${Math.floor(hours / 24)} 天前`;
+}
+
+function TimelineItem({ item, isLast }: {
+  item: { id: number; userName: string | null; type: string; title: string; detail?: string | null; createdAt: Date };
+  isLast: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const meta = ACTIVITY_ICONS[item.type] || ACTIVITY_ICONS.todo_done;
+  const Icon = meta.icon;
+  return (
+    <div className="relative flex gap-3 group">
+      {/* Vertical line */}
+      {!isLast && (
+        <div className="absolute left-[13px] top-7 bottom-0 w-px bg-gray-100" />
+      )}
+      {/* Icon dot */}
+      <div className={cn("w-7 h-7 rounded-full flex items-center justify-center shrink-0 z-10 mt-0.5", meta.bg)}>
+        <Icon className={cn("w-3.5 h-3.5", meta.color)} />
+      </div>
+      {/* Content */}
+      <div
+        className="flex-1 pb-3 cursor-pointer"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <span className="text-xs font-semibold text-gray-700">{item.userName}</span>
+            <span className="text-xs text-gray-400 mx-1">·</span>
+            <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded-full", meta.bg, meta.color)}>{meta.label}</span>
+            <p className="text-xs text-gray-600 mt-0.5 truncate font-medium">{item.title}</p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <span className="text-[10px] text-gray-300">{formatRelativeTime(item.createdAt)}</span>
+            {item.detail && (
+              expanded
+                ? <ChevronUp className="w-3 h-3 text-gray-300 group-hover:text-gray-400" />
+                : <ChevronDown className="w-3 h-3 text-gray-300 group-hover:text-gray-400" />
+            )}
+          </div>
+        </div>
+        {/* Expanded detail */}
+        {expanded && item.detail && (
+          <div className="mt-1.5 px-2.5 py-2 rounded-xl bg-gray-50 border border-gray-100">
+            <p className="text-xs text-gray-500 leading-relaxed">{item.detail}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TeamTimeline() {
+  const { isAuthenticated } = useAuth();
+  const { data: liveActivities } = trpc.activities.list.useQuery(undefined, { enabled: isAuthenticated });
+  const items = (liveActivities && liveActivities.length > 0)
+    ? liveActivities.slice(0, 5).map(a => ({ ...a, createdAt: new Date(a.createdAt) }))
+    : MOCK_ACTIVITIES;
+  return (
+    <div className="h-full rounded-[20px] bg-white border border-gray-100 shadow-sm p-5 flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-xl bg-violet-50 flex items-center justify-center">
+            <TrendingUp className="w-3.5 h-3.5 text-violet-500" />
+          </div>
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">团队动态</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-[10px] text-gray-400">Live</span>
+        </div>
+      </div>
+      {/* Timeline items */}
+      <div className="flex-1 overflow-hidden">
+        {items.map((item, i) => (
+          <TimelineItem key={item.id} item={item} isLast={i === items.length - 1} />
+        ))}
+      </div>
+    </div>
+  );
+}
+// ─── Hero Panel ───────────────────────────────────────────────────────────────
 function HeroPanel({ user, isAuthenticated }: {
   user: { name?: string | null } | null;
   isAuthenticated: boolean;
@@ -305,18 +415,19 @@ function HeroPanel({ user, isAuthenticated }: {
           </p>
         )}
         <h1
-          className="font-display font-extrabold text-gray-900 leading-[1.05] tracking-tight"
-          style={{ fontSize: "clamp(2.4rem, 3.5vw, 3.4rem)" }}
+          className="font-display font-extrabold leading-[1.0] tracking-tighter"
+          style={{ fontSize: "clamp(3rem, 4.5vw, 5rem)" }}
         >
-          设计<br />协作<br />
+          <span className="text-gray-900">设计</span><br />
+          <span className="text-gray-900">协作</span><br />
           <span
             className="bg-clip-text text-transparent"
-            style={{ backgroundImage: "linear-gradient(135deg, #7C3AED 0%, #4F46E5 100%)" }}
+            style={{ backgroundImage: "linear-gradient(135deg, #7C3AED 0%, #A855F7 50%, #4F46E5 100%)" }}
           >
             画布
           </span>
         </h1>
-        <p className="mt-3 text-sm text-gray-400 leading-relaxed">
+        <p className="mt-4 text-xs text-gray-400 leading-relaxed tracking-wide">
           为 B 端中台设计团队打造<br />从调研到交付的全流程协作平台
         </p>
         {!isAuthenticated && (
@@ -387,33 +498,14 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Row 2: Large inspiration (wide, 2/3) + CTA column (1/3) */}
+            {/* Row 2: Large inspiration (wide, 2/3) + Timeline (1/3) */}
             <div className="grid grid-cols-3 gap-4">
               <div className="col-span-2">
-                <LargeFeatureCard f={FEATURES[4]} />{/* 灵感碰撞墙 — large showcase */}
+                <LargeFeatureCard f={FEATURES[4]} />{/* 灵感碰撞墙 */}
               </div>
-              {/* Right col: CTA only */}
+              {/* Right col: Team Timeline */}
               <div className="col-span-1">
-                <div className="h-full rounded-[20px] bg-white border border-gray-100 shadow-sm p-6 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="w-8 h-8 rounded-xl bg-violet-50 flex items-center justify-center">
-                        <Zap className="w-4 h-4 text-violet-600" />
-                      </div>
-                      <span className="text-xs font-semibold text-violet-600 uppercase tracking-wider">快速开始</span>
-                    </div>
-                    <p className="text-lg font-bold text-gray-900 leading-snug mb-2">上传会议录音</p>
-                    <p className="text-sm text-gray-400 leading-relaxed">30 秒内 AI 自动生成按优先级拆解的待办清单</p>
-                  </div>
-                  <Link href="/meetings">
-                    <div
-                      className="mt-4 px-5 py-2.5 rounded-2xl text-white text-sm font-semibold flex items-center gap-2 transition-all hover:opacity-90 hover:-translate-y-0.5 cursor-pointer w-fit"
-                      style={{ background: "linear-gradient(135deg, #7C3AED, #4F46E5)" }}
-                    >
-                      立即体验 <ArrowRight className="w-4 h-4" />
-                    </div>
-                  </Link>
-                </div>
+                <TeamTimeline />
               </div>
             </div>
 

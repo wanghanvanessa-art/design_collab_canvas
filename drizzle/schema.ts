@@ -192,3 +192,18 @@ export const blindboxItems = mysqlTable("blindbox_items", {
 });
 
 export type BlindboxItem = typeof blindboxItems.$inferSelect;
+
+// ─── Activities (团队动态时间线) ──────────────────────────────────────────────
+export const activities = mysqlTable("activities", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  userName: varchar("userName", { length: 100 }),
+  type: mysqlEnum("type", ["todo_done", "idea_posted", "review_passed", "interview_added", "knowledge_added", "inspiration_added"]).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  detail: text("detail"),
+  refId: int("refId"),
+  refType: varchar("refType", { length: 50 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type Activity = typeof activities.$inferSelect;
+export type InsertActivity = typeof activities.$inferInsert;
