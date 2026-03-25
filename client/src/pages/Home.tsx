@@ -7,8 +7,8 @@ import TopNav from "@/components/TopNav";
 import PixelCat from "@/components/PixelCat";
 import {
   Mic2, Lightbulb, Users, BookOpen, Sparkles, Search,
-  ArrowRight, Gift, CheckCircle2, Clock, TrendingUp, Star,
-  Zap, FileText, MessageSquare, Brain, ChevronDown, ChevronUp,
+  ArrowRight, Gift, CheckCircle2, Clock, TrendingUp,
+  ChevronDown, ChevronUp,
   CheckCheck, PenLine, ShieldCheck, UserPlus, Library, Layers
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -75,14 +75,6 @@ const FEATURES = [
     accentCls: "bg-indigo-500",
     linkColor: "text-indigo-600",
   },
-];
-
-const QUOTES = [
-  "好的设计是尽可能少的设计。— Dieter Rams",
-  "设计不只是外观，更是运作的方式。— Steve Jobs",
-  "简单是终极的复杂。— Leonardo da Vinci",
-  "用户不会阅读，他们只会扫描。— Jakob Nielsen",
-  "设计是解决问题，艺术是提出问题。",
 ];
 
 // ─── Large Feature Card (tall) — accent strip only on hover ──────────────────
@@ -270,15 +262,83 @@ function BlindboxCard() {
   );
 }
 
-// ─── Quote Card ───────────────────────────────────────────────────────────────
-function QuoteCard() {
-  const [idx] = useState(() => Math.floor(Math.random() * QUOTES.length));
+// ─── Inspiration Wall Canvas Card (custom, with sticky notes + dot grid) ────────
+const STICKY_NOTES = [
+  { text: "Flat Design",      color: "#FDE68A", rotate: "-3deg",  x: "55%", y: "12%" },
+  { text: "Neumorphism",      color: "#FBCFE8", rotate: "2.5deg", x: "72%", y: "28%" },
+  { text: "Glassmorphism",    color: "#BBF7D0", rotate: "-1.5deg",x: "58%", y: "46%" },
+  { text: "Dark Mode First",  color: "#C7D2FE", rotate: "3deg",   x: "68%", y: "62%" },
+  { text: "Motion Design",    color: "#FED7AA", rotate: "-2deg",  x: "56%", y: "68%" },
+];
+
+function InspirationWallCard() {
+  const f = FEATURES[4]; // 灵感碰撞墙
+  const Icon = f.icon;
   return (
-    <div className="rounded-[20px] bg-gray-950 border border-gray-800 p-5 flex flex-col justify-between min-h-[110px]">
-      <Star className="w-3.5 h-3.5 text-amber-400" />
-      <p className="text-sm font-medium leading-relaxed text-gray-300 flex-1 py-3">{QUOTES[idx]}</p>
-      <span className="text-[10px] text-gray-600 uppercase tracking-wider">设计语录</span>
-    </div>
+    <Link href={f.href} className="group block h-full">
+      <div
+        className="relative h-full min-h-[200px] rounded-[24px] bg-white overflow-hidden cursor-pointer border border-gray-100 shadow-sm transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5"
+      >
+        {/* Accent top strip — only visible on hover */}
+        <div className={cn("h-1 w-full transition-opacity duration-300 opacity-0 group-hover:opacity-100", f.accentCls)} />
+
+        {/* Dot grid background — only on right canvas half */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            backgroundImage: "radial-gradient(circle, #d1d5db 1px, transparent 1px)",
+            backgroundSize: "20px 20px",
+            opacity: 0.4,
+          }}
+        />
+
+        {/* Left white gradient to keep text readable */}
+        <div
+          className="absolute inset-y-0 left-0 pointer-events-none"
+          style={{ width: "52%", background: "linear-gradient(to right, rgba(255,255,255,0.97) 70%, transparent)" }}
+        />
+
+        {/* Sticky notes — right half canvas area only */}
+        <div className="absolute inset-0 pointer-events-none">
+          {STICKY_NOTES.map((note, i) => (
+            <div
+              key={i}
+              className="absolute flex items-center justify-center px-2.5 py-1.5 rounded-md shadow-sm text-[11px] font-semibold text-gray-700 select-none"
+              style={{
+                background: note.color,
+                transform: `rotate(${note.rotate})`,
+                left: note.x,
+                top: note.y,
+                boxShadow: "0 2px 6px rgba(0,0,0,0.10)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {note.text}
+            </div>
+          ))}
+        </div>
+
+        {/* Card content — left half, z above dots */}
+        <div className="relative z-10 p-6 h-full flex flex-col" style={{ maxWidth: "52%" }}>
+          <div className="flex items-start justify-between mb-4">
+            <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center", f.iconBg)}>
+              <Icon className={cn("w-5 h-5", f.iconColor)} />
+            </div>
+            <span className={cn("text-[11px] font-semibold px-2.5 py-1 rounded-full", f.tagBg)}>
+              {f.tag}
+            </span>
+          </div>
+          <h3 className="font-display text-[20px] font-bold text-gray-900 mb-2 transition-opacity group-hover:opacity-75">
+            {f.label}
+          </h3>
+          <p className="text-sm text-gray-500 leading-relaxed flex-1">{f.desc}</p>
+          <div className="flex items-center gap-2 mt-5 pt-4 border-t border-gray-100">
+            <span className={cn("text-sm font-semibold", f.linkColor)}>进入功能</span>
+            <ArrowRight className={cn("w-3.5 h-3.5 transition-transform group-hover:translate-x-1", f.linkColor)} />
+          </div>
+        </div>
+      </div>
+    </Link>
   );
 }
 
@@ -475,9 +535,6 @@ export default function Home() {
 
             {/* Blindbox */}
             <BlindboxCard />
-
-            {/* Quote */}
-            <QuoteCard />
           </div>
 
           {/* ── Right Bento (col 4-12) ── */}
@@ -501,7 +558,7 @@ export default function Home() {
             {/* Row 2: Large inspiration (wide, 2/3) + Timeline (1/3) */}
             <div className="grid grid-cols-3 gap-4">
               <div className="col-span-2">
-                <LargeFeatureCard f={FEATURES[4]} />{/* 灵感碰撞墙 */}
+                <InspirationWallCard />{/* 灵感碰撞墙 */}
               </div>
               {/* Right col: Team Timeline */}
               <div className="col-span-1">
