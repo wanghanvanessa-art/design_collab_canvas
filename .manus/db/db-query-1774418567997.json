@@ -1,0 +1,9 @@
+{
+  "query": "INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('0001_married_spitfire_hash', 1774418448200), ('0002_good_elektra_hash', 1774418484898);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway05.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 25Nbg86zLQKJQf7.root --database MXCa9iCP8SZjvExQvRx7oF --execute INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('0001_married_spitfire_hash', 1774418448200), ('0002_good_elektra_hash', 1774418484898);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1493
+}

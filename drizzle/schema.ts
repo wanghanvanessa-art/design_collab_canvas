@@ -1,17 +1,18 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import {
+  int,
+  mysqlEnum,
+  mysqlTable,
+  text,
+  timestamp,
+  varchar,
+  json,
+  boolean,
+  float,
+} from "drizzle-orm/mysql-core";
 
-/**
- * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
- */
+// ─── Users ───────────────────────────────────────────────────────────────────
 export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
   id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
@@ -25,4 +26,169 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+// ─── Meetings (会议语音转核心思路) ──────────────────────────────────────────
+export const meetings = mysqlTable("meetings", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  audioUrl: text("audioUrl"),
+  transcript: text("transcript"),
+  summary: text("summary"),
+  keyInsights: json("keyInsights").$type<string[]>(),
+  status: mysqlEnum("status", ["uploading", "transcribing", "analyzing", "done", "error"]).default("uploading").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Meeting = typeof meetings.$inferSelect;
+
+// ─── Todos (待办事项) ────────────────────────────────────────────────────────
+export const todos = mysqlTable("todos", {
+  id: int("id").autoincrement().primaryKey(),
+  meetingId: int("meetingId"),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  description: text("description"),
+  priority: mysqlEnum("priority", ["high", "medium", "low"]).default("medium").notNull(),
+  assignee: varchar("assignee", { length: 255 }),
+  dueDate: timestamp("dueDate"),
+  completed: boolean("completed").default(false).notNull(),
+  sourceType: mysqlEnum("sourceType", ["meeting", "manual", "idea"]).default("manual").notNull(),
+  sourceId: int("sourceId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Todo = typeof todos.$inferSelect;
+
+// ─── Ideas (开放式想法落地页) ────────────────────────────────────────────────
+export const ideas = mysqlTable("ideas", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  content: text("content").notNull(),
+  tags: json("tags").$type<string[]>(),
+  status: mysqlEnum("status", ["draft", "published", "archived"]).default("draft").notNull(),
+  likesCount: int("likesCount").default(0).notNull(),
+  commentsCount: int("commentsCount").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Idea = typeof ideas.$inferSelect;
+
+// ─── IdeaComments (想法评论) ─────────────────────────────────────────────────
+export const ideaComments = mysqlTable("idea_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  ideaId: int("ideaId").notNull(),
+  userId: int("userId").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type IdeaComment = typeof ideaComments.$inferSelect;
+
+// ─── Interviews (用户访谈全流程管理) ─────────────────────────────────────────
+export const interviews = mysqlTable("interviews", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  interviewee: varchar("interviewee", { length: 255 }),
+  date: timestamp("date"),
+  content: text("content"),
+  audienceLabels: json("audienceLabels").$type<string[]>(),
+  painPoints: json("painPoints").$type<string[]>(),
+  designSolutions: json("designSolutions").$type<string[]>(),
+  status: mysqlEnum("status", ["draft", "analyzing", "done"]).default("draft").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Interview = typeof interviews.$inferSelect;
+
+// ─── KnowledgeArticles (设计调研知识库) ──────────────────────────────────────
+export const knowledgeArticles = mysqlTable("knowledge_articles", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  content: text("content").notNull(),
+  tags: json("tags").$type<string[]>(),
+  version: int("version").default(1).notNull(),
+  parentId: int("parentId"),
+  category: varchar("category", { length: 100 }),
+  collaborators: json("collaborators").$type<number[]>(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type KnowledgeArticle = typeof knowledgeArticles.$inferSelect;
+
+// ─── InspirationItems (设计灵感碰撞墙) ───────────────────────────────────────
+export const inspirationItems = mysqlTable("inspiration_items", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  boardId: int("boardId"),
+  type: mysqlEnum("type", ["text", "image", "link", "screenshot"]).default("text").notNull(),
+  title: varchar("title", { length: 500 }),
+  content: text("content"),
+  imageUrl: text("imageUrl"),
+  url: text("url"),
+  posX: float("posX").default(0),
+  posY: float("posY").default(0),
+  width: float("width").default(200),
+  height: float("height").default(150),
+  styleTags: json("styleTags").$type<string[]>(),
+  linkedTodoId: int("linkedTodoId"),
+  linkedInterviewId: int("linkedInterviewId"),
+  color: varchar("color", { length: 20 }).default("#ffffff"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InspirationItem = typeof inspirationItems.$inferSelect;
+
+// ─── InspirationBoards (灵感画布) ────────────────────────────────────────────
+export const inspirationBoards = mysqlTable("inspiration_boards", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type InspirationBoard = typeof inspirationBoards.$inferSelect;
+
+// ─── DesignReviews (设计方案智能评审) ────────────────────────────────────────
+export const designReviews = mysqlTable("design_reviews", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  designUrl: text("designUrl").notNull(),
+  version: int("version").default(1).notNull(),
+  parentId: int("parentId"),
+  businessLogicScore: float("businessLogicScore"),
+  interactionScore: float("interactionScore"),
+  accessibilityScore: float("accessibilityScore"),
+  overallScore: float("overallScore"),
+  reviewComments: json("reviewComments").$type<{dimension: string; score: number; comment: string}[]>(),
+  suggestions: json("suggestions").$type<string[]>(),
+  status: mysqlEnum("status", ["uploading", "reviewing", "done", "error"]).default("uploading").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type DesignReview = typeof designReviews.$inferSelect;
+
+// ─── InspirationBlindbox (灵感盲盒内容库) ────────────────────────────────────
+export const blindboxItems = mysqlTable("blindbox_items", {
+  id: int("id").autoincrement().primaryKey(),
+  type: mysqlEnum("type", ["case", "knowledge", "tip", "quote"]).default("knowledge").notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  content: text("content").notNull(),
+  imageUrl: text("imageUrl"),
+  source: varchar("source", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type BlindboxItem = typeof blindboxItems.$inferSelect;
