@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { Button } from "@/components/ui/button";
@@ -6,29 +6,85 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
-import { Gift, Sparkles, Loader2, RefreshCw, BookOpen, Lightbulb, Star, Zap } from "lucide-react";
+import { BookOpen, Lightbulb, Star, Zap, RefreshCw, Loader2, Sparkles } from "lucide-react";
 
-const boxColors = [
-  "from-violet-400 to-purple-500",
-  "from-pink-400 to-rose-500",
-  "from-amber-400 to-orange-500",
-  "from-emerald-400 to-teal-500",
-  "from-sky-400 to-blue-500",
-];
-
-const typeConfig: Record<string, { label: string; icon: any; color: string; bg: string }> = {
-  case: { label: "优秀案例", icon: Star, color: "text-amber-600", bg: "bg-amber-50 border-amber-100" },
-  knowledge: { label: "设计冷知识", icon: BookOpen, color: "text-sky-600", bg: "bg-sky-50 border-sky-100" },
-  tip: { label: "设计小贴士", icon: Lightbulb, color: "text-violet-600", bg: "bg-violet-50 border-violet-100" },
-  trend: { label: "行业趋势", icon: Zap, color: "text-emerald-600", bg: "bg-emerald-50 border-emerald-100" },
+// ─── Type config ──────────────────────────────────────────────────────────────
+const typeConfig: Record<string, { label: string; icon: any; color: string; bg: string; accent: string }> = {
+  case:      { label: "优秀案例",   icon: Star,      color: "text-amber-600",  bg: "bg-amber-50",   accent: "#f59e0b" },
+  knowledge: { label: "设计冷知识", icon: BookOpen,  color: "text-sky-600",    bg: "bg-sky-50",     accent: "#0ea5e9" },
+  tip:       { label: "设计小贴士", icon: Lightbulb, color: "text-violet-600", bg: "bg-violet-50",  accent: "#7c3aed" },
+  trend:     { label: "行业趋势",   icon: Zap,       color: "text-emerald-600",bg: "bg-emerald-50", accent: "#10b981" },
 };
+
+// ─── Particle component ───────────────────────────────────────────────────────
+function Particles({ active }: { active: boolean }) {
+  const particles = [
+    { color: "#a78bfa", angle: 0,   dist: 90 },
+    { color: "#f472b6", angle: 45,  dist: 110 },
+    { color: "#fb923c", angle: 90,  dist: 95 },
+    { color: "#34d399", angle: 135, dist: 105 },
+    { color: "#38bdf8", angle: 180, dist: 88 },
+    { color: "#f472b6", angle: 225, dist: 115 },
+    { color: "#a78bfa", angle: 270, dist: 100 },
+    { color: "#fb923c", angle: 315, dist: 92 },
+    { color: "#fbbf24", angle: 22,  dist: 80 },
+    { color: "#34d399", angle: 67,  dist: 120 },
+    { color: "#38bdf8", angle: 112, dist: 85 },
+    { color: "#f472b6", angle: 157, dist: 108 },
+  ];
+
+  if (!active) return null;
+
+  return (
+    <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
+      {particles.map((p, i) => {
+        const rad = (p.angle * Math.PI) / 180;
+        const tx = Math.cos(rad) * p.dist;
+        const ty = Math.sin(rad) * p.dist;
+        return (
+          <div
+            key={i}
+            className="absolute rounded-full"
+            style={{
+              width: i % 3 === 0 ? 10 : i % 3 === 1 ? 7 : 5,
+              height: i % 3 === 0 ? 10 : i % 3 === 1 ? 7 : 5,
+              backgroundColor: p.color,
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              animation: `particle-fly-${i} 0.8s ease-out forwards`,
+              animationDelay: `${i * 30}ms`,
+            }}
+          />
+        );
+      })}
+      <style>{`
+        ${particles.map((p, i) => {
+          const rad = (p.angle * Math.PI) / 180;
+          const tx = Math.cos(rad) * p.dist;
+          const ty = Math.sin(rad) * p.dist;
+          return `
+            @keyframes particle-fly-${i} {
+              0%   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+              60%  { transform: translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(1.2); opacity: 0.9; }
+              100% { transform: translate(calc(-50% + ${tx * 1.4}px), calc(-50% + ${ty * 1.4}px)) scale(0); opacity: 0; }
+            }
+          `;
+        }).join("")}
+      `}</style>
+    </div>
+  );
+}
+
+// ─── Box states: idle → shaking → opening → opened ───────────────────────────
+type BoxState = "idle" | "shaking" | "opening" | "opened";
 
 export default function Blindbox() {
   const { isAuthenticated } = useAuth();
-  const [isOpening, setIsOpening] = useState(false);
-  const [opened, setOpened] = useState(false);
+  const [boxState, setBoxState] = useState<BoxState>("idle");
+  const [showParticles, setShowParticles] = useState(false);
+  const [showResult, setShowResult] = useState(false);
   const [currentItem, setCurrentItem] = useState<any>(null);
-  const [colorIdx, setColorIdx] = useState(0);
 
   const saveToKnowledge = trpc.blindbox.saveToKnowledge.useMutation({
     onSuccess: () => toast.success("已成功收藏到知识库！"),
@@ -38,31 +94,42 @@ export default function Blindbox() {
   const draw = trpc.blindbox.draw.useMutation({
     onSuccess: (data) => {
       setCurrentItem(data);
-      setIsOpening(false);
-      setOpened(true);
-      setColorIdx(Math.floor(Math.random() * boxColors.length));
+      // Phase 3: box "opens" (lid flies up)
+      setBoxState("opening");
+      setTimeout(() => {
+        // Phase 4: particles burst + result appears
+        setBoxState("opened");
+        setShowParticles(true);
+        setTimeout(() => setShowParticles(false), 900);
+        setTimeout(() => setShowResult(true), 300);
+      }, 400);
     },
     onError: () => {
-      setIsOpening(false);
+      setBoxState("idle");
       toast.error("抽取失败，请重试");
     },
   });
 
   const handleOpen = () => {
-    setIsOpening(true);
-    setOpened(false);
-    setTimeout(() => draw.mutate(undefined), 600);
+    if (boxState !== "idle") return;
+    setShowResult(false);
+    setCurrentItem(null);
+    // Phase 1: shake
+    setBoxState("shaking");
+    // Phase 2: fetch data after shake
+    setTimeout(() => draw.mutate(undefined), 700);
   };
 
   const handleReset = () => {
-    setOpened(false);
+    setBoxState("idle");
+    setShowResult(false);
     setCurrentItem(null);
   };
 
   if (!isAuthenticated) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <Gift className="w-12 h-12 text-amber-400" />
+        <div className="text-5xl">🎁</div>
         <h2 className="font-display text-xl font-600">请先登录</h2>
         <a href={getLoginUrl()}><Button>登录使用</Button></a>
       </div>
@@ -74,63 +141,84 @@ export default function Blindbox() {
   return (
     <div className="pb-8">
       {/* Header */}
-      <div className="mb-10">
+      <div className="mb-8">
         <div className="flex items-center gap-2.5 mb-2">
-          <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-xl">
-            🎁
-          </div>
+          <div className="w-9 h-9 rounded-xl bg-amber-100 flex items-center justify-center text-xl">🎁</div>
           <h1 className="font-display text-2xl font-700">灵感盲盒</h1>
           <Badge className="bg-amber-100 text-amber-700 border-0 text-xs">彩蛋功能</Badge>
         </div>
-        <p className="text-muted-foreground text-sm ml-11">随机推送团队优秀案例、行业趣味设计冷知识，激发无限创意</p>
+        <p className="text-muted-foreground text-sm ml-11">随机推送优秀案例、设计冷知识、行业趋势，激发无限创意</p>
       </div>
 
-      <div className="flex flex-col items-center justify-center py-8">
-        {/* Box Animation */}
-        <div className="relative mb-10">
-          {/* Floating particles */}
-          {opened && (
-            <>
-              {[...Array(8)].map((_, i) => (
-                <div
-                  key={i}
-                  className="absolute w-2 h-2 rounded-full animate-ping opacity-60"
-                  style={{
-                    backgroundColor: ["#a78bfa", "#f472b6", "#fb923c", "#34d399", "#38bdf8"][i % 5],
-                    left: `${50 + Math.cos(i * 45 * Math.PI / 180) * 60}px`,
-                    top: `${50 + Math.sin(i * 45 * Math.PI / 180) * 60}px`,
-                    animationDelay: `${i * 100}ms`,
-                    animationDuration: "1s",
-                  }}
-                />
-              ))}
-            </>
-          )}
+      {/* Main stage */}
+      <div className="flex flex-col items-center justify-center py-6 gap-10">
 
-          {/* Main box */}
+        {/* ── Gift Box ── */}
+        <div className="relative flex flex-col items-center" style={{ minHeight: 200 }}>
+          <Particles active={showParticles} />
+
+          {/* Box body */}
           <div
             className={cn(
-              "w-36 h-36 rounded-3xl flex items-center justify-center text-6xl cursor-pointer transition-all duration-300 shadow-xl select-none",
-              "bg-gradient-to-br",
-              boxColors[colorIdx],
-              isOpening && "animate-bounce scale-110",
-              !opened && !isOpening && "hover:scale-105 hover:shadow-2xl hover:rotate-3",
-              opened && "scale-95 opacity-90"
+              "relative cursor-pointer select-none transition-all duration-300",
+              boxState === "idle" && "hover:scale-105 hover:-rotate-2",
+              boxState === "shaking" && "animate-[wiggle_0.15s_ease-in-out_4]",
+              boxState === "opening" && "scale-110",
+              boxState === "opened" && "scale-100 opacity-90",
             )}
-            onClick={!opened && !isOpening ? handleOpen : undefined}
+            onClick={boxState === "idle" ? handleOpen : undefined}
+            style={{ width: 160, height: 160 }}
           >
-            {isOpening ? (
-              <Loader2 className="w-12 h-12 text-white animate-spin" />
-            ) : opened ? (
-              <span className="text-5xl">✨</span>
-            ) : (
-              <span>🎁</span>
+            {/* Box bottom */}
+            <div
+              className="absolute bottom-0 left-0 right-0 rounded-2xl shadow-2xl overflow-hidden"
+              style={{
+                height: boxState === "opening" || boxState === "opened" ? "75%" : "100%",
+                background: "linear-gradient(145deg, #f59e0b, #d97706)",
+                transition: "height 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)",
+              }}
+            >
+              {/* Ribbon vertical */}
+              <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-8 bg-red-500/70" />
+              {/* Shine */}
+              <div className="absolute top-2 left-3 w-6 h-10 rounded-full bg-white/20 rotate-12" />
+            </div>
+
+            {/* Box lid */}
+            <div
+              className="absolute left-0 right-0 rounded-2xl shadow-xl overflow-hidden"
+              style={{
+                height: "32%",
+                background: "linear-gradient(145deg, #fbbf24, #f59e0b)",
+                top: boxState === "opening" || boxState === "opened" ? "-60%" : 0,
+                transition: "top 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)",
+                zIndex: 2,
+              }}
+            >
+              {/* Ribbon horizontal on lid */}
+              <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-5 bg-red-500/70" />
+              {/* Bow */}
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-xl z-10">🎀</div>
+            </div>
+
+            {/* Sparkle inside when opened */}
+            {(boxState === "opened") && (
+              <div className="absolute inset-0 flex items-center justify-center" style={{ zIndex: 3 }}>
+                <span className="text-5xl animate-[pop_0.4s_cubic-bezier(0.34,1.56,0.64,1)]">✨</span>
+              </div>
+            )}
+
+            {/* Loading spinner */}
+            {boxState === "shaking" && draw.isPending && (
+              <div className="absolute -bottom-8 left-1/2 -translate-x-1/2">
+                <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
+              </div>
             )}
           </div>
         </div>
 
-        {/* CTA */}
-        {!opened && !isOpening && (
+        {/* ── CTA / Status text ── */}
+        {boxState === "idle" && (
           <div className="text-center animate-slide-up">
             <h2 className="font-display text-2xl font-700 mb-2">点击盲盒，获取今日灵感</h2>
             <p className="text-muted-foreground text-sm mb-6">每次抽取都是惊喜，可能是优秀案例、设计冷知识或行业趋势</p>
@@ -141,19 +229,23 @@ export default function Blindbox() {
           </div>
         )}
 
-        {/* Result Card */}
-        {opened && currentItem && typeInfo && (
+        {boxState === "shaking" && (
+          <p className="text-muted-foreground text-sm animate-pulse">正在为你寻找灵感...</p>
+        )}
+
+        {/* ── Result Card ── */}
+        {showResult && currentItem && typeInfo && (
           <div className="w-full max-w-lg animate-slide-up">
-            <div className={cn("p-6 rounded-2xl border-2", typeInfo.bg)}>
-              {/* Type Badge */}
+            <div className={cn("p-6 rounded-2xl border-2", typeInfo.bg, "border-current/10")}>
+              {/* Type badge */}
               <div className="flex items-center gap-2 mb-4">
                 <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center", typeInfo.bg)}>
                   <typeInfo.icon className={cn("w-4 h-4", typeInfo.color)} />
                 </div>
-                <span className={cn("text-xs font-medium px-2.5 py-1 rounded-full", typeInfo.bg, typeInfo.color)}>
+                <span className={cn("text-xs font-semibold px-2.5 py-1 rounded-full bg-white/80 border", typeInfo.color)}>
                   {typeInfo.label}
                 </span>
-                <span className="ml-auto text-xs text-muted-foreground">今日灵感</span>
+                <span className="ml-auto text-xs text-muted-foreground">今日灵感 ✨</span>
               </div>
 
               {/* Content */}
@@ -164,14 +256,14 @@ export default function Blindbox() {
               {currentItem.tags && currentItem.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-4">
                   {currentItem.tags.map((tag: string) => (
-                    <span key={tag} className="text-xs px-2.5 py-1 rounded-full bg-white/70 text-gray-600 border border-gray-200">{tag}</span>
+                    <span key={tag} className="text-xs px-2.5 py-1 rounded-full bg-white/80 text-gray-600 border border-gray-200">{tag}</span>
                   ))}
                 </div>
               )}
 
               {/* Source */}
               {currentItem.source && (
-                <p className="text-xs text-muted-foreground">来源：{currentItem.source}</p>
+                <p className="text-xs text-muted-foreground/70">来源：{currentItem.source}</p>
               )}
             </div>
 
@@ -183,7 +275,7 @@ export default function Blindbox() {
               </Button>
               <Button
                 className="flex-1 rounded-xl gap-2"
-                disabled={saveToKnowledge.isPending}
+                disabled={saveToKnowledge.isPending || saveToKnowledge.isSuccess}
                 onClick={() => {
                   if (!currentItem) return;
                   saveToKnowledge.mutate({
@@ -196,20 +288,37 @@ export default function Blindbox() {
               >
                 {saveToKnowledge.isPending ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
+                ) : saveToKnowledge.isSuccess ? (
+                  <span>✓ 已收藏</span>
                 ) : (
-                  <BookOpen className="w-4 h-4" />
+                  <><BookOpen className="w-4 h-4" />收藏到知识库</>
                 )}
-                收藏到知识库
               </Button>
             </div>
           </div>
         )}
 
-        {/* History hint */}
-        <div className="mt-12 text-center text-muted-foreground">
-          <p className="text-xs">💡 每次开启盲盒都会随机推送不同内容，包含团队沉淀的优秀案例和精选设计知识</p>
-        </div>
+        {/* Hint */}
+        {boxState === "idle" && (
+          <p className="text-xs text-muted-foreground/60 text-center max-w-xs">
+            💡 每次开启都会随机推送不同内容，包含团队沉淀的优秀案例和精选设计知识
+          </p>
+        )}
       </div>
+
+      {/* Keyframe animations */}
+      <style>{`
+        @keyframes wiggle {
+          0%, 100% { transform: rotate(0deg); }
+          25%       { transform: rotate(-8deg) scale(1.05); }
+          75%       { transform: rotate(8deg) scale(1.05); }
+        }
+        @keyframes pop {
+          0%   { transform: scale(0) rotate(-20deg); opacity: 0; }
+          60%  { transform: scale(1.3) rotate(10deg); opacity: 1; }
+          100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }
