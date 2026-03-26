@@ -165,6 +165,9 @@ export const knowledgeArticles = mysqlTable("knowledge_articles", {
   parentId: int("parentId"),
   category: varchar("category", { length: 100 }),
   collaborators: json("collaborators").$type<number[]>(),
+  // 来源关联：meeting / blindbox / manual
+  sourceType: varchar("sourceType", { length: 50 }),
+  sourceMeetingId: int("sourceMeetingId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

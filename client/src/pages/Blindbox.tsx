@@ -86,9 +86,15 @@ export default function Blindbox() {
   const [showParticles, setShowParticles] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [currentItem, setCurrentItem] = useState<any>(null);
+  // 按条目 ID 独立记录收藏状态，避免新盲盒继承已收藏状态
+  const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
 
   const saveToKnowledge = trpc.blindbox.saveToKnowledge.useMutation({
-    onSuccess: () => toast.success("已成功收藏到知识库！"),
+    onSuccess: (_, variables) => {
+      toast.success("已成功收藏到知识库！");
+      // 将当前条目 ID 加入已收藏集合
+      if (currentItem?.id) setSavedIds(prev => new Set(Array.from(prev).concat(currentItem.id)));
+    },
     onError: () => toast.error("收藏失败，请重试"),
   });
 
@@ -125,6 +131,8 @@ export default function Blindbox() {
     setBoxState("idle");
     setShowResult(false);
     setCurrentItem(null);
+    // 重置 mutation 状态，确保下次抽取时按钮恢复正常
+    saveToKnowledge.reset();
   };
 
   if (!isAuthenticated) {
@@ -277,9 +285,10 @@ export default function Blindbox() {
               </Button>
               <Button
                 className="flex-1 rounded-xl gap-2"
-                disabled={saveToKnowledge.isPending || saveToKnowledge.isSuccess}
+                disabled={saveToKnowledge.isPending || (currentItem?.id && savedIds.has(currentItem.id))}
                 onClick={() => {
                   if (!currentItem) return;
+                  if (currentItem?.id && savedIds.has(currentItem.id)) return;
                   saveToKnowledge.mutate({
                     title: currentItem.title,
                     content: currentItem.content || currentItem.title,
@@ -290,7 +299,7 @@ export default function Blindbox() {
               >
                 {saveToKnowledge.isPending ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
-                ) : saveToKnowledge.isSuccess ? (
+                ) : (currentItem?.id && savedIds.has(currentItem.id)) ? (
                   <span>✓ 已收藏</span>
                 ) : (
                   <><BookOpen className="w-4 h-4" />收藏到知识库</>

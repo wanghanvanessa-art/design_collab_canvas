@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,9 @@ import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 import {
   Mic2, Upload, Plus, CheckCircle2, Circle, Clock, User,
-  ChevronDown, Loader2, FileAudio, Trash2, AlertCircle,
-  Sparkles, ListTodo, ArrowRight, ExternalLink
+  Loader2, FileAudio, Trash2, AlertCircle,
+  Sparkles, ListTodo, ArrowRight, ExternalLink,
+  MicOff, Square, BookOpen, Check,
 } from "lucide-react";
 import { BackButton } from "@/components/BackButton";
 
@@ -24,18 +25,134 @@ const priorityConfig = {
   low: { label: "低优先级", class: "priority-low", dot: "bg-emerald-400" },
 };
 
+// ─── Recording state ──────────────────────────────────────────────────────────
+type RecordingState = "idle" | "recording" | "paused" | "uploading";
+
+function RecordingTimer({ seconds }: { seconds: number }) {
+  const m = Math.floor(seconds / 60).toString().padStart(2, "0");
+  const s = (seconds % 60).toString().padStart(2, "0");
+  return <span className="font-mono text-sm tabular-nums">{m}:{s}</span>;
+}
+
+// ─── Save to Knowledge Dialog ─────────────────────────────────────────────────
+function SaveToKnowledgeDialog({
+  meeting,
+  open,
+  onOpenChange,
+}: {
+  meeting: { id: number; title: string; summary?: string | null; keyInsights?: string[] | null };
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const [title, setTitle] = useState(`会议纪要：${meeting.title}`);
+  const [tags, setTags] = useState("会议纪要");
+  const [saved, setSaved] = useState(false);
+
+  const content = [
+    meeting.summary ? `## 会议摘要\n${meeting.summary}` : "",
+    meeting.keyInsights && meeting.keyInsights.length > 0
+      ? `## 核心洞察\n${meeting.keyInsights.map((k, i) => `${i + 1}. ${k}`).join("\n")}`
+      : "",
+  ].filter(Boolean).join("\n\n") || `来源会议：${meeting.title}`;
+
+  const saveToKnowledge = trpc.meetings.saveToKnowledge.useMutation({
+    onSuccess: () => {
+      setSaved(true);
+      toast.success("已成功保存到知识库！");
+      setTimeout(() => { onOpenChange(false); setSaved(false); }, 1500);
+    },
+    onError: () => toast.error("保存失败，请重试"),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="rounded-2xl max-w-md">
+        <DialogHeader>
+          <DialogTitle className="font-display flex items-center gap-2">
+            <BookOpen className="w-4 h-4 text-blue-500" />
+            保存到知识库
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">知识库条目标题</label>
+            <Input
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              className="rounded-xl"
+              placeholder="输入标题"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">内容预览</label>
+            <div className="p-3 rounded-xl bg-gray-50 border border-gray-200 text-xs text-gray-600 max-h-32 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+              {content}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">标签（逗号分隔）</label>
+            <Input
+              value={tags}
+              onChange={e => setTags(e.target.value)}
+              className="rounded-xl"
+              placeholder="会议纪要, 设计决策"
+            />
+          </div>
+          <div className="flex items-start gap-2 p-3 rounded-xl bg-blue-50">
+            <BookOpen className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+            <p className="text-xs text-blue-700">保存后可在「设计知识库」中查看，并与团队共享此次会议的核心成果。</p>
+          </div>
+          <Button
+            className="w-full rounded-xl"
+            onClick={() => saveToKnowledge.mutate({
+              meetingId: meeting.id,
+              title: title.trim() || `会议纪要：${meeting.title}`,
+              content,
+              tags: tags.split(",").map(t => t.trim()).filter(Boolean),
+              category: "会议纪要",
+            })}
+            disabled={saveToKnowledge.isPending || saved}
+          >
+            {saved ? (
+              <><Check className="w-4 h-4 mr-2" />已保存</>
+            ) : saveToKnowledge.isPending ? (
+              <><Loader2 className="w-4 h-4 animate-spin mr-2" />保存中...</>
+            ) : (
+              <><BookOpen className="w-4 h-4 mr-2" />保存到知识库</>
+            )}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function Meetings() {
   const { isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [newTodoOpen, setNewTodoOpen] = useState(false);
+  const [recordOpen, setRecordOpen] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState("");
+  const [recordTitle, setRecordTitle] = useState("");
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [filterPriority, setFilterPriority] = useState<string>("all");
   const [newTodo, setNewTodo] = useState({ title: "", priority: "medium" as "high" | "medium" | "low", assignee: "", dueDate: "" });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
+
+  // Recording state
+  const [recordingState, setRecordingState] = useState<RecordingState>("idle");
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Save to knowledge dialog
+  const [saveKnowledgeMeeting, setSaveKnowledgeMeeting] = useState<any>(null);
 
   const { data: meetings, isLoading: meetingsLoading } = trpc.meetings.list.useQuery(undefined, { enabled: isAuthenticated });
   const { data: todos, isLoading: todosLoading } = trpc.todos.list.useQuery({ priority: filterPriority === "all" ? undefined : filterPriority as any }, { enabled: isAuthenticated });
@@ -44,8 +161,11 @@ export default function Meetings() {
     onSuccess: () => {
       toast.success("会议录音上传成功，AI 正在分析中...");
       setUploadOpen(false);
+      setRecordOpen(false);
       setMeetingTitle("");
       setAudioFile(null);
+      setAudioBlob(null);
+      setRecordTitle("");
       utils.meetings.list.invalidate();
     },
     onError: () => toast.error("上传失败，请重试"),
@@ -79,6 +199,59 @@ export default function Meetings() {
   const deleteTodo = trpc.todos.delete.useMutation({
     onSuccess: () => { toast.success("已删除"); utils.todos.list.invalidate(); },
   });
+
+  // ─── Recording logic ────────────────────────────────────────────────────────
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        setAudioBlob(blob);
+        stream.getTracks().forEach(t => t.stop());
+      };
+      mr.start(200);
+      mediaRecorderRef.current = mr;
+      setRecordingState("recording");
+      setRecordSeconds(0);
+      timerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    } catch {
+      toast.error("无法访问麦克风，请检查权限设置");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    if (timerRef.current) clearInterval(timerRef.current);
+    setRecordingState("idle");
+  };
+
+  useEffect(() => {
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, []);
+
+  const handleUploadRecording = async () => {
+    if (!recordTitle.trim()) { toast.error("请输入会议标题"); return; }
+    if (!audioBlob) { toast.error("请先完成录音"); return; }
+    if (audioBlob.size > 16 * 1024 * 1024) { toast.error("录音文件超过 16MB，请缩短录音时长"); return; }
+    setRecordingState("uploading");
+    try {
+      const file = new File([audioBlob], `recording-${Date.now()}.webm`, { type: "audio/webm" });
+      const formData = new FormData();
+      formData.append("audio", file);
+      const uploadRes = await fetch("/api/upload/audio", { method: "POST", body: formData });
+      const { url } = await uploadRes.json();
+      await uploadMeeting.mutateAsync({ title: recordTitle, audioUrl: url });
+    } catch {
+      toast.error("上传失败，请重试");
+    } finally {
+      setRecordingState("idle");
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -130,7 +303,7 @@ export default function Meetings() {
             </div>
             <h1 className="font-display text-2xl font-700 text-foreground">会议转待办</h1>
           </div>
-          <p className="text-muted-foreground text-sm ml-11">上传会议录音，AI 自动提取核心思路并生成结构化待办清单</p>
+          <p className="text-muted-foreground text-sm ml-11">上传或直接录制会议音频，AI 自动提取核心思路并生成结构化待办清单</p>
         </div>
         <div className="flex gap-2">
           <Dialog open={newTodoOpen} onOpenChange={setNewTodoOpen}>
@@ -158,9 +331,121 @@ export default function Meetings() {
             </DialogContent>
           </Dialog>
 
+          {/* Direct Recording Dialog */}
+          <Dialog open={recordOpen} onOpenChange={(v) => {
+            if (!v) { stopRecording(); setAudioBlob(null); setRecordSeconds(0); }
+            setRecordOpen(v);
+          }}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="rounded-xl gap-2 border-rose-200 text-rose-600 hover:bg-rose-50">
+                <Mic2 className="w-4 h-4" />直接录音
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="rounded-2xl max-w-sm">
+              <DialogHeader><DialogTitle className="font-display">直接录制会议</DialogTitle></DialogHeader>
+              <div className="space-y-4 pt-2">
+                <Input
+                  placeholder="会议标题"
+                  value={recordTitle}
+                  onChange={e => setRecordTitle(e.target.value)}
+                  className="rounded-xl"
+                />
+
+                {/* Recording visualizer */}
+                <div className={cn(
+                  "flex flex-col items-center gap-4 p-6 rounded-2xl border-2 transition-all",
+                  recordingState === "recording"
+                    ? "border-rose-300 bg-rose-50"
+                    : audioBlob
+                    ? "border-emerald-300 bg-emerald-50"
+                    : "border-dashed border-gray-200 bg-gray-50"
+                )}>
+                  {recordingState === "recording" ? (
+                    <>
+                      {/* Animated waveform */}
+                      <div className="flex items-center gap-1 h-10">
+                        {[...Array(12)].map((_, i) => (
+                          <div
+                            key={i}
+                            className="w-1 bg-rose-400 rounded-full animate-pulse"
+                            style={{
+                              height: `${20 + Math.sin(i * 0.8) * 12}px`,
+                              animationDelay: `${i * 0.08}s`,
+                              animationDuration: `${0.6 + (i % 3) * 0.2}s`,
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2 text-rose-600">
+                        <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                        <span className="text-sm font-medium">录音中</span>
+                        <RecordingTimer seconds={recordSeconds} />
+                      </div>
+                      <Button
+                        variant="outline"
+                        className="rounded-xl border-rose-300 text-rose-600 hover:bg-rose-100 gap-2"
+                        onClick={stopRecording}
+                      >
+                        <Square className="w-4 h-4" />停止录音
+                      </Button>
+                    </>
+                  ) : audioBlob ? (
+                    <>
+                      <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
+                        <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm font-medium text-emerald-700">录音完成</p>
+                        <p className="text-xs text-emerald-600 mt-0.5">时长 <RecordingTimer seconds={recordSeconds} />，大小 {(audioBlob.size / 1024).toFixed(0)} KB</p>
+                      </div>
+                      <button
+                        onClick={() => { setAudioBlob(null); setRecordSeconds(0); }}
+                        className="text-xs text-gray-400 hover:text-gray-600 underline"
+                      >
+                        重新录制
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center">
+                        <Mic2 className="w-6 h-6 text-gray-400" />
+                      </div>
+                      <p className="text-sm text-gray-500 text-center">点击开始录制会议音频</p>
+                      <Button
+                        className="rounded-xl bg-rose-500 hover:bg-rose-600 text-white gap-2"
+                        onClick={startRecording}
+                      >
+                        <Mic2 className="w-4 h-4" />开始录音
+                      </Button>
+                    </>
+                  )}
+                </div>
+
+                {audioBlob && (
+                  <div className="flex items-start gap-2 p-3 rounded-xl bg-violet-50">
+                    <Sparkles className="w-4 h-4 text-violet-500 mt-0.5 shrink-0" />
+                    <p className="text-xs text-violet-700">AI 将自动转录音频、提取核心思路，并生成按优先级分类的待办清单，同时支持一键保存到知识库。</p>
+                  </div>
+                )}
+
+                <Button
+                  className="w-full rounded-xl"
+                  onClick={handleUploadRecording}
+                  disabled={!audioBlob || recordingState === "uploading" || uploadMeeting.isPending}
+                >
+                  {(recordingState === "uploading" || uploadMeeting.isPending)
+                    ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />上传分析中...</>
+                    : <><Sparkles className="w-4 h-4 mr-2" />AI 分析录音</>
+                  }
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Upload File Dialog */}
           <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
             <DialogTrigger asChild>
-              <Button className="rounded-xl gap-2"><Upload className="w-4 h-4" />上传会议录音</Button>
+              <Button className="rounded-xl gap-2"><Upload className="w-4 h-4" />上传录音</Button>
             </DialogTrigger>
             <DialogContent className="rounded-2xl">
               <DialogHeader><DialogTitle className="font-display">上传会议录音</DialogTitle></DialogHeader>
@@ -207,7 +492,7 @@ export default function Meetings() {
             <div className="text-center py-12 text-muted-foreground">
               <FileAudio className="w-8 h-8 mx-auto mb-2 opacity-40" />
               <p className="text-sm">暂无会议记录</p>
-              <p className="text-xs mt-1">上传录音开始分析</p>
+              <p className="text-xs mt-1">上传录音或直接录制开始分析</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -234,16 +519,26 @@ export default function Meetings() {
                       ))}
                     </div>
                   )}
-                  <div className="flex items-center justify-between mt-2">
+                  <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100">
                     <p className="text-[10px] text-muted-foreground">{new Date(m.createdAt).toLocaleDateString("zh-CN")}</p>
-                    {m.status === "done" && (
-                      <button
-                        onClick={() => navigate(`/meetings/${m.id}`)}
-                        className="flex items-center gap-1 text-[10px] text-violet-600 hover:text-violet-800 font-medium transition-colors"
-                      >
-                        进入详情 <ExternalLink className="w-2.5 h-2.5" />
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {m.status === "done" && (
+                        <>
+                          <button
+                            onClick={() => setSaveKnowledgeMeeting(m)}
+                            className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 font-medium transition-colors"
+                          >
+                            <BookOpen className="w-2.5 h-2.5" />存知识库
+                          </button>
+                          <button
+                            onClick={() => navigate(`/meetings/${m.id}`)}
+                            className="flex items-center gap-1 text-[10px] text-violet-600 hover:text-violet-800 font-medium transition-colors"
+                          >
+                            进入详情 <ExternalLink className="w-2.5 h-2.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -349,6 +644,15 @@ export default function Meetings() {
           )}
         </div>
       </div>
+
+      {/* Save to Knowledge Dialog */}
+      {saveKnowledgeMeeting && (
+        <SaveToKnowledgeDialog
+          meeting={saveKnowledgeMeeting}
+          open={!!saveKnowledgeMeeting}
+          onOpenChange={(v) => { if (!v) setSaveKnowledgeMeeting(null); }}
+        />
+      )}
     </div>
   );
 }

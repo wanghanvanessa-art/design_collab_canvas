@@ -179,6 +179,45 @@ const meetingsRouter = router({
     await db.update(todos).set(updates as any).where(and(eq(todos.id, id), eq(todos.userId, ctx.user.id)));
     return { success: true };
   }),
+
+  // 一键保存会议纪要到知识库
+  saveToKnowledge: protectedProcedure.input(z.object({
+    meetingId: z.number(),
+    title: z.string().min(1),
+    content: z.string().min(1),
+    tags: z.array(z.string()).optional(),
+    category: z.string().optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    // Verify meeting belongs to user
+    const [meeting] = await db.select().from(meetings).where(and(eq(meetings.id, input.meetingId), eq(meetings.userId, ctx.user.id)));
+    if (!meeting) throw new Error("Meeting not found");
+    const [result] = await db.insert(knowledgeArticles).values({
+      userId: ctx.user.id,
+      title: input.title,
+      content: input.content,
+      tags: input.tags || ["会议纪要"],
+      category: input.category || "会议纪要",
+      version: 1,
+      sourceType: "meeting",
+      sourceMeetingId: input.meetingId,
+    });
+    const articleId = (result as any).insertId as number;
+    // Record activity
+    try {
+      await db.insert(activities).values({
+        userId: ctx.user.id,
+        userName: ctx.user.name || "团队成员",
+        type: "knowledge_added",
+        title: `会议「${meeting.title}」已保存到知识库`,
+        detail: input.title,
+        refId: articleId,
+        refType: "knowledge",
+      });
+    } catch {}
+    return { success: true, articleId };
+  }),
 });
 
 // ─── Todos Router ─────────────────────────────────────────────────────────────
