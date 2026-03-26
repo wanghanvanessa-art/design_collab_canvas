@@ -9,7 +9,7 @@ import { getDb } from "./db";
 import {
   meetings, todos, ideas, ideaComments, ideaVersions, ideaReactions, interviews,
   knowledgeArticles, inspirationItems, designReviews, blindboxItems, activities,
-  meetingComments
+  meetingComments, knowledgeComments, knowledgeFavorites, knowledgeViews, knowledgeTags
 } from "../drizzle/schema";
 import { eq, and, like, or, desc, isNull } from "drizzle-orm";
 
@@ -607,7 +607,149 @@ const knowledgeRouter = router({
 
     // Update original to latest content
     await db.update(knowledgeArticles).set({ content: input.content, version: maxVersion + 1 }).where(eq(knowledgeArticles.id, input.id));
+
+    // Record activity
+    await db.insert(activities).values({
+      userId: ctx.user.id,
+      userName: ctx.user.name || '匿名用户',
+      type: 'knowledge_added',
+      title: `更新了「${article.title}」`,
+      detail: `版本 v${maxVersion + 1}`,
+      refId: input.id,
+      refType: 'knowledge',
+    });
     return { success: true };
+  }),
+
+  // 获取带统计数据的列表（评论数、收藏数、浏览数）
+  listWithStats: protectedProcedure.input(z.object({
+    search: z.string().optional(),
+    tag: z.string().optional(),
+  }).optional()).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return [];
+    const conditions = [isNull(knowledgeArticles.parentId)];
+    if (input?.search) {
+      conditions.push(or(
+        like(knowledgeArticles.title, `%${input.search}%`),
+        like(knowledgeArticles.content, `%${input.search}%`),
+      ) as any);
+    }
+    const articles = await db.select().from(knowledgeArticles).where(and(...conditions)).orderBy(desc(knowledgeArticles.updatedAt));
+    // Attach stats
+    const withStats = await Promise.all(articles.map(async (a) => {
+      const [commentRows, favoriteRows, viewRows] = await Promise.all([
+        db.select().from(knowledgeComments).where(eq(knowledgeComments.articleId, a.id)),
+        db.select().from(knowledgeFavorites).where(eq(knowledgeFavorites.articleId, a.id)),
+        db.select().from(knowledgeViews).where(eq(knowledgeViews.articleId, a.id)),
+      ]);
+      const isFavorited = favoriteRows.some(f => f.userId === ctx.user.id);
+      return { ...a, commentCount: commentRows.length, favoriteCount: favoriteRows.length, viewCount: viewRows.length, isFavorited };
+    }));
+    return withStats;
+  }),
+
+  // 记录浏览
+  recordView: protectedProcedure.input(z.object({ articleId: z.number() })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return;
+    // 避免重复记录（同一用户同一文章当天只记录一次）
+    const existing = await db.select().from(knowledgeViews)
+      .where(and(eq(knowledgeViews.articleId, input.articleId), eq(knowledgeViews.userId, ctx.user.id)));
+    if (existing.length === 0) {
+      await db.insert(knowledgeViews).values({ articleId: input.articleId, userId: ctx.user.id });
+    }
+    return { success: true };
+  }),
+
+  // 收藏/取消收藏
+  toggleFavorite: protectedProcedure.input(z.object({ articleId: z.number() })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    const existing = await db.select().from(knowledgeFavorites)
+      .where(and(eq(knowledgeFavorites.articleId, input.articleId), eq(knowledgeFavorites.userId, ctx.user.id)));
+    if (existing.length > 0) {
+      await db.delete(knowledgeFavorites).where(and(eq(knowledgeFavorites.articleId, input.articleId), eq(knowledgeFavorites.userId, ctx.user.id)));
+      return { favorited: false };
+    } else {
+      await db.insert(knowledgeFavorites).values({ articleId: input.articleId, userId: ctx.user.id });
+      return { favorited: true };
+    }
+  }),
+
+  // 评论列表
+  listComments: protectedProcedure.input(z.object({ articleId: z.number() })).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return [];
+    return db.select().from(knowledgeComments).where(eq(knowledgeComments.articleId, input.articleId)).orderBy(desc(knowledgeComments.createdAt));
+  }),
+
+  // 添加评论
+  addComment: protectedProcedure.input(z.object({
+    articleId: z.number(),
+    content: z.string().min(1),
+    parentId: z.number().optional(),
+    emoji: z.string().optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    await db.insert(knowledgeComments).values({
+      articleId: input.articleId,
+      userId: ctx.user.id,
+      userName: ctx.user.name || '匿名用户',
+      content: input.content,
+      parentId: input.parentId || null,
+      emoji: input.emoji || null,
+    });
+    return { success: true };
+  }),
+
+  // 团队知识动态（最近 24h）
+  teamActivity: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return [];
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const acts = await db.select().from(activities)
+      .where(and(
+        eq(activities.refType, 'knowledge'),
+      ))
+      .orderBy(desc(activities.createdAt))
+      .limit(30);
+    // Also get recent comments
+    const recentComments = await db.select().from(knowledgeComments)
+      .orderBy(desc(knowledgeComments.createdAt))
+      .limit(10);
+    const commentActivities = recentComments.map(c => ({
+      id: c.id + 100000,
+      userId: c.userId,
+      userName: c.userName || '匿名用户',
+      type: 'comment' as const,
+      title: `评论了知识条目`,
+      detail: c.content.slice(0, 50),
+      refId: c.articleId,
+      refType: 'knowledge',
+      createdAt: c.createdAt,
+    }));
+    const combined = [
+      ...acts.map(a => ({ ...a, type: a.type as string })),
+      ...commentActivities,
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 20);
+    return combined;
+  }),
+
+  // 标签库（带使用频次）
+  listTags: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return [];
+    // 从所有文章的 tags 字段统计频次
+    const articles = await db.select({ tags: knowledgeArticles.tags }).from(knowledgeArticles).where(isNull(knowledgeArticles.parentId));
+    const tagCount: Record<string, number> = {};
+    for (const a of articles) {
+      for (const tag of (a.tags as string[] || [])) {
+        tagCount[tag] = (tagCount[tag] || 0) + 1;
+      }
+    }
+    return Object.entries(tagCount).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
   }),
 });
 

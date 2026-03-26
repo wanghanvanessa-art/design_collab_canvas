@@ -255,3 +255,44 @@ export const activities = mysqlTable("activities", {
 });
 export type Activity = typeof activities.$inferSelect;
 export type InsertActivity = typeof activities.$inferInsert;
+
+// ─── KnowledgeComments (知识库评论) ──────────────────────────────────────────
+export const knowledgeComments = mysqlTable("knowledge_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  articleId: int("articleId").notNull(),
+  userId: int("userId").notNull(),
+  userName: varchar("userName", { length: 100 }),
+  content: text("content").notNull(),
+  parentId: int("parentId"),
+  emoji: varchar("emoji", { length: 10 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type KnowledgeComment = typeof knowledgeComments.$inferSelect;
+
+// ─── KnowledgeFavorites (知识库收藏) ─────────────────────────────────────────
+export const knowledgeFavorites = mysqlTable("knowledge_favorites", {
+  id: int("id").autoincrement().primaryKey(),
+  articleId: int("articleId").notNull(),
+  userId: int("userId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type KnowledgeFavorite = typeof knowledgeFavorites.$inferSelect;
+
+// ─── KnowledgeViews (知识库浏览记录) ─────────────────────────────────────────
+export const knowledgeViews = mysqlTable("knowledge_views", {
+  id: int("id").autoincrement().primaryKey(),
+  articleId: int("articleId").notNull(),
+  userId: int("userId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type KnowledgeView = typeof knowledgeViews.$inferSelect;
+
+// ─── KnowledgeTags (团队共维护标签库) ────────────────────────────────────────
+export const knowledgeTags = mysqlTable("knowledge_tags", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 100 }).notNull().unique(),
+  usageCount: int("usageCount").default(0).notNull(),
+  createdBy: int("createdBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type KnowledgeTag = typeof knowledgeTags.$inferSelect;

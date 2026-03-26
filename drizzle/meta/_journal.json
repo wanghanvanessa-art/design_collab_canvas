@@ -50,6 +50,13 @@
       "when": 1774434703320,
       "tag": "0006_special_zarda",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1774504506586,
+      "tag": "0007_amusing_wolf_cub",
+      "breakpoints": true
     }
   ]
 }
