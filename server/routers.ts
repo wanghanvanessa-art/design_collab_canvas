@@ -11,7 +11,7 @@ import {
   knowledgeArticles, inspirationItems, designReviews, blindboxItems, activities,
   meetingComments, knowledgeComments, knowledgeFavorites, knowledgeViews, knowledgeTags
 } from "../drizzle/schema";
-import { eq, and, like, or, desc, isNull } from "drizzle-orm";
+import { eq, and, like, or, desc, isNull, gte, lte } from "drizzle-orm";
 
 // ─── Auth Router ──────────────────────────────────────────────────────────────
 const authRouter = router({
@@ -750,6 +750,175 @@ const knowledgeRouter = router({
       }
     }
     return Object.entries(tagCount).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }),
+
+  // 高级搜索（多维度：关键词+标签+作者+时间+分类+排序）
+  advancedSearch: protectedProcedure.input(z.object({
+    query: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    author: z.string().optional(),
+    category: z.string().optional(),
+    dateFrom: z.string().optional(),
+    dateTo: z.string().optional(),
+    sortBy: z.enum(['latest', 'popular', 'mostCommented', 'mostFavorited']).default('latest'),
+    searchIn: z.enum(['content', 'member', 'comments']).default('content'),
+    viewMode: z.enum(['list', 'grid']).default('list'),
+  })).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return { articles: [], total: 0 };
+
+    // Search in comments mode
+    if (input.searchIn === 'comments' && input.query) {
+      const matchedComments = await db.select().from(knowledgeComments)
+        .where(like(knowledgeComments.content, `%${input.query}%`))
+        .orderBy(desc(knowledgeComments.createdAt))
+        .limit(50);
+      const articleIds = Array.from(new Set(matchedComments.map(c => c.articleId)));
+      if (articleIds.length === 0) return { articles: [], total: 0, comments: [] };
+      const matchedArticles = await db.select().from(knowledgeArticles)
+        .where(and(isNull(knowledgeArticles.parentId)));
+      const filtered = matchedArticles.filter(a => articleIds.includes(a.id));
+      const withStats = await Promise.all(filtered.map(async (a) => {
+        const [commentRows, favoriteRows, viewRows] = await Promise.all([
+          db.select().from(knowledgeComments).where(eq(knowledgeComments.articleId, a.id)),
+          db.select().from(knowledgeFavorites).where(eq(knowledgeFavorites.articleId, a.id)),
+          db.select().from(knowledgeViews).where(eq(knowledgeViews.articleId, a.id)),
+        ]);
+        const isFavorited = favoriteRows.some(f => f.userId === ctx.user.id);
+        const matchedCmts = matchedComments.filter(c => c.articleId === a.id);
+        return { ...a, commentCount: commentRows.length, favoriteCount: favoriteRows.length, viewCount: viewRows.length, isFavorited, matchedComments: matchedCmts };
+      }));
+      return { articles: withStats, total: withStats.length };
+    }
+
+    // Search in member mode
+    if (input.searchIn === 'member' && input.author) {
+      const memberArticles = await db.select().from(knowledgeArticles)
+        .where(and(isNull(knowledgeArticles.parentId)))
+        .orderBy(desc(knowledgeArticles.updatedAt));
+      // Filter by author name (stored in activities or user lookup)
+      const withStats = await Promise.all(memberArticles.map(async (a) => {
+        const [commentRows, favoriteRows, viewRows] = await Promise.all([
+          db.select().from(knowledgeComments).where(eq(knowledgeComments.articleId, a.id)),
+          db.select().from(knowledgeFavorites).where(eq(knowledgeFavorites.articleId, a.id)),
+          db.select().from(knowledgeViews).where(eq(knowledgeViews.articleId, a.id)),
+        ]);
+        const isFavorited = favoriteRows.some(f => f.userId === ctx.user.id);
+        return { ...a, commentCount: commentRows.length, favoriteCount: favoriteRows.length, viewCount: viewRows.length, isFavorited };
+      }));
+      return { articles: withStats, total: withStats.length };
+    }
+
+    // Standard content search
+    const conditions: any[] = [isNull(knowledgeArticles.parentId)];
+    if (input.query) {
+      conditions.push(or(
+        like(knowledgeArticles.title, `%${input.query}%`),
+        like(knowledgeArticles.content, `%${input.query}%`),
+      ) as any);
+    }
+    if (input.category) {
+      conditions.push(eq(knowledgeArticles.category, input.category));
+    }
+    if (input.dateFrom) {
+      conditions.push(gte(knowledgeArticles.createdAt, new Date(input.dateFrom)) as any);
+    }
+    if (input.dateTo) {
+      conditions.push(lte(knowledgeArticles.createdAt, new Date(input.dateTo)) as any);
+    }
+
+    let articles = await db.select().from(knowledgeArticles)
+      .where(and(...conditions))
+      .orderBy(desc(knowledgeArticles.updatedAt));
+
+    // Filter by tags
+    if (input.tags && input.tags.length > 0) {
+      articles = articles.filter(a => {
+        const articleTags = a.tags as string[] || [];
+        return input.tags!.some(t => articleTags.includes(t));
+      });
+    }
+
+    const withStats = await Promise.all(articles.map(async (a) => {
+      const [commentRows, favoriteRows, viewRows] = await Promise.all([
+        db.select().from(knowledgeComments).where(eq(knowledgeComments.articleId, a.id)),
+        db.select().from(knowledgeFavorites).where(eq(knowledgeFavorites.articleId, a.id)),
+        db.select().from(knowledgeViews).where(eq(knowledgeViews.articleId, a.id)),
+      ]);
+      const isFavorited = favoriteRows.some(f => f.userId === ctx.user.id);
+      return { ...a, commentCount: commentRows.length, favoriteCount: favoriteRows.length, viewCount: viewRows.length, isFavorited };
+    }));
+
+    // Sort
+    let sorted = withStats;
+    if (input.sortBy === 'popular') sorted = withStats.sort((a, b) => b.viewCount - a.viewCount);
+    else if (input.sortBy === 'mostCommented') sorted = withStats.sort((a, b) => b.commentCount - a.commentCount);
+    else if (input.sortBy === 'mostFavorited') sorted = withStats.sort((a, b) => b.favoriteCount - a.favoriteCount);
+
+    return { articles: sorted, total: sorted.length };
+  }),
+
+  // 关联推荐（基于标签和分类）
+  relatedArticles: protectedProcedure.input(z.object({
+    articleId: z.number(),
+    limit: z.number().default(4),
+  })).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return [];
+    const [article] = await db.select().from(knowledgeArticles).where(eq(knowledgeArticles.id, input.articleId));
+    if (!article) return [];
+    const articleTags = article.tags as string[] || [];
+    // Get all other articles
+    const others = await db.select().from(knowledgeArticles)
+      .where(and(isNull(knowledgeArticles.parentId)))
+      .orderBy(desc(knowledgeArticles.updatedAt))
+      .limit(100);
+    // Score by tag overlap + same category
+    const scored = others
+      .filter(a => a.id !== input.articleId)
+      .map(a => {
+        const aTags = a.tags as string[] || [];
+        const overlap = aTags.filter(t => articleTags.includes(t)).length;
+        const sameCategory = a.category === article.category ? 2 : 0;
+        return { ...a, score: overlap + sameCategory };
+      })
+      .filter(a => a.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, input.limit);
+    // If not enough, fill with recent articles
+    if (scored.length < input.limit) {
+      const recent = others
+        .filter(a => a.id !== input.articleId && !scored.find(s => s.id === a.id))
+        .slice(0, input.limit - scored.length)
+        .map(a => ({ ...a, score: 0 }));
+      return [...scored, ...recent];
+    }
+    return scored;
+  }),
+
+  // 自动补全建议
+  autocomplete: protectedProcedure.input(z.object({
+    query: z.string(),
+  })).query(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return { titles: [], tags: [] };
+    if (!input.query || input.query.length < 1) return { titles: [], tags: [] };
+    const articles = await db.select({ id: knowledgeArticles.id, title: knowledgeArticles.title, tags: knowledgeArticles.tags })
+      .from(knowledgeArticles)
+      .where(and(isNull(knowledgeArticles.parentId), like(knowledgeArticles.title, `%${input.query}%`)))
+      .limit(5);
+    // Collect matching tags
+    const allArticles = await db.select({ tags: knowledgeArticles.tags }).from(knowledgeArticles).where(isNull(knowledgeArticles.parentId));
+    const matchingTags = new Set<string>();
+    for (const a of allArticles) {
+      for (const tag of (a.tags as string[] || [])) {
+        if (tag.toLowerCase().includes(input.query.toLowerCase())) matchingTags.add(tag);
+      }
+    }
+    return {
+      titles: articles.map(a => ({ id: a.id, title: a.title })),
+      tags: Array.from(matchingTags).slice(0, 5),
+    };
   }),
 });
 
