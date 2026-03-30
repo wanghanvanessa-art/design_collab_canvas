@@ -1,0 +1,29 @@
+{
+  "query": "SELECT type, COUNT(*) as count FROM blindbox_items GROUP BY type; SELECT COUNT(*) as total FROM blindbox_items;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway05.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 25Nbg86zLQKJQf7.root --database MXCa9iCP8SZjvExQvRx7oF --execute SELECT type, COUNT(*) as count FROM blindbox_items GROUP BY type; SELECT COUNT(*) as total FROM blindbox_items;",
+  "rows": [
+    {
+      "type": "case",
+      "count": "500"
+    },
+    {
+      "type": "quote",
+      "count": "500"
+    },
+    {
+      "type": "knowledge",
+      "count": "500"
+    },
+    {
+      "type": "tip",
+      "count": "500"
+    }
+  ],
+  "messages": [
+    "total",
+    "2000"
+  ],
+  "stdout": "type\tcount\ncase\t500\nquote\t500\nknowledge\t500\ntip\t500\ntotal\n2000\n",
+  "stderr": "",
+  "execution_time_ms": 1844
+}
