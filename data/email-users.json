@@ -1,0 +1,26 @@
+[
+  {
+    "id": "fea9831ad53b2bf357fcf3bf",
+    "email": "test@jd.com",
+    "name": "测试用户",
+    "passwordHash": "6fb4d7d5c6177ec00425fe305e6e11b3f9003057f7d178d55a1931a3888bd0a6",
+    "salt": "fc4bb848bd5dc6bc2842fa33c633b71c",
+    "createdAt": "2026-03-27T10:29:43.008Z"
+  },
+  {
+    "id": "bb745cbc97de9debf282150e",
+    "email": "demo@jd.com",
+    "name": "设计师小王",
+    "passwordHash": "f3c8634fc43ffeccf6f3edf376f873240e2df3b76b194214acda5ec59ec19833",
+    "salt": "4c0e1fb7c434b271b670c1ab52a83d08",
+    "createdAt": "2026-03-27T10:31:54.387Z"
+  },
+  {
+    "id": "0269bf7eabb31d3b3fa13149",
+    "email": "wanghansofia@163.com",
+    "name": "汪菡",
+    "passwordHash": "2f02bc3c074695a775c9b6c9273d7cae09c5c873d7e974d7be640365e771a3c2",
+    "salt": "5cf6435a4b23ec33c7fd77c3097e2967",
+    "createdAt": "2026-03-30T02:31:18.276Z"
+  }
+]
