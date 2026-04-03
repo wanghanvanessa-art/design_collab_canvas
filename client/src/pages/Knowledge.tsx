@@ -1,4 +1,3 @@
-import { openLoginModal } from "@/lib/loginModal";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -14,7 +13,7 @@ import {
   Eye, Heart, MessageCircle, Flame, Users, ChevronRight, Send, Bookmark,
   TrendingUp, Activity, Sparkles, GitCompare, UserPlus, Hash, Filter,
   SlidersHorizontal, Grid3X3, List, ArrowUpDown, User, Calendar, RotateCcw,
-  ChevronDown, Lightbulb, Zap
+  ChevronDown, Lightbulb, Zap, Trash2
 } from "lucide-react";
 import { BackButton } from "@/components/BackButton";
 
@@ -115,11 +114,13 @@ const SORT_OPTIONS = [
 ] as const;
 
 export default function Knowledge() {
-  const { isAuthenticated, user } = useAuth();
+  const { user } = useAuth();
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editContent, setEditContent] = useState("");
+  const [editTitleMode, setEditTitleMode] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
   const [commentText, setCommentText] = useState("");
   const [activeTab, setActiveTab] = useState<"content" | "comments" | "versions">("content");
   const [catTrigger, setCatTrigger] = useState(false);
@@ -166,7 +167,7 @@ export default function Knowledge() {
   // Autocomplete
   const { data: autocomplete } = trpc.knowledge.autocomplete.useQuery(
     { query: debouncedQuery },
-    { enabled: isAuthenticated && debouncedQuery.length >= 1 && showAutocomplete }
+    { enabled: debouncedQuery.length >= 1 && showAutocomplete }
   );
 
   // Advanced search
@@ -182,7 +183,6 @@ export default function Knowledge() {
       searchIn: searchMode,
       viewMode,
     },
-    { enabled: isAuthenticated }
   );
 
   const articles = searchResult?.articles || [];
@@ -201,10 +201,9 @@ export default function Knowledge() {
     { enabled: !!selectedId }
   );
   const { data: teamActivity } = trpc.knowledge.teamActivity.useQuery(undefined, {
-    enabled: isAuthenticated,
     refetchInterval: 30000,
   });
-  const { data: tagStats } = trpc.knowledge.listTags.useQuery(undefined, { enabled: isAuthenticated });
+  const { data: tagStats } = trpc.knowledge.listTags.useQuery();
   const { data: relatedArticles } = trpc.knowledge.relatedArticles.useQuery(
     { articleId: selectedId! },
     { enabled: !!selectedId }
@@ -215,8 +214,40 @@ export default function Knowledge() {
       toast.success("知识条目已创建");
       setCreateOpen(false);
       setForm({ title: "", content: "", tags: "", category: "", collaborators: "" });
-      utils.knowledge.advancedSearch.invalidate();
+      // 触发 left list 一定重拉：命中当前查询 key + 清空筛选后的默认 key
+      const currentAdvancedSearchInput = {
+        query: debouncedQuery || undefined,
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+        author: searchMode === "member" ? memberQuery || undefined : undefined,
+        category: selectedCategory !== "全部" ? selectedCategory : undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        sortBy,
+        searchIn: searchMode,
+        viewMode,
+      };
+
+      const defaultAdvancedSearchInput = {
+        query: undefined,
+        tags: undefined,
+        author: undefined,
+        category: undefined,
+        dateFrom: undefined,
+        dateTo: undefined,
+        sortBy: "latest" as const,
+        searchIn: "content" as const,
+        viewMode,
+      };
+
+      utils.knowledge.advancedSearch.invalidate(currentAdvancedSearchInput as any);
+      utils.knowledge.advancedSearch.invalidate(defaultAdvancedSearchInput as any);
+      clearFilters();
       setCatTrigger(v => !v);
+    },
+    onError: (err) => {
+      console.error("[Knowledge] create failed:", err);
+      const msg = err instanceof Error ? err.message : "创建失败，请重试";
+      toast.error(msg);
     },
   });
 
@@ -224,10 +255,97 @@ export default function Knowledge() {
     onSuccess: () => {
       toast.success("已保存新版本");
       setEditMode(false);
+      setEditTitleMode(false);
+      setEditTitle("");
       utils.knowledge.get.invalidate({ id: selectedId! });
       utils.knowledge.versions.invalidate({ id: selectedId! });
       utils.knowledge.teamActivity.invalidate();
       setCatTrigger(v => !v);
+    },
+  });
+
+  const updateTitle = trpc.knowledge.updateTitle.useMutation({
+    onSuccess: () => {
+      toast.success("标题已更新");
+      if (selectedId) {
+        utils.knowledge.get.invalidate({ id: selectedId });
+        utils.knowledge.versions.invalidate({ id: selectedId });
+      }
+
+      const currentAdvancedSearchInput = {
+        query: debouncedQuery || undefined,
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+        author: searchMode === "member" ? memberQuery || undefined : undefined,
+        category: selectedCategory !== "全部" ? selectedCategory : undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        sortBy,
+        searchIn: searchMode,
+        viewMode,
+      };
+
+      const defaultAdvancedSearchInput = {
+        query: undefined,
+        tags: undefined,
+        author: undefined,
+        category: undefined,
+        dateFrom: undefined,
+        dateTo: undefined,
+        sortBy: "latest" as const,
+        searchIn: "content" as const,
+        viewMode,
+      };
+
+      utils.knowledge.advancedSearch.invalidate(currentAdvancedSearchInput as any);
+      utils.knowledge.advancedSearch.invalidate(defaultAdvancedSearchInput as any);
+      utils.knowledge.teamActivity.invalidate();
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : "更新失败，请重试";
+      toast.error(msg);
+    },
+  });
+
+  const deleteArticle = trpc.knowledge.delete.useMutation({
+    onSuccess: () => {
+      toast.success("知识条目已删除");
+      setSelectedId(null);
+      setEditMode(false);
+      setEditTitleMode(false);
+      setEditTitle("");
+
+      const currentAdvancedSearchInput = {
+        query: debouncedQuery || undefined,
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+        author: searchMode === "member" ? memberQuery || undefined : undefined,
+        category: selectedCategory !== "全部" ? selectedCategory : undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        sortBy,
+        searchIn: searchMode,
+        viewMode,
+      };
+
+      const defaultAdvancedSearchInput = {
+        query: undefined,
+        tags: undefined,
+        author: undefined,
+        category: undefined,
+        dateFrom: undefined,
+        dateTo: undefined,
+        sortBy: "latest" as const,
+        searchIn: "content" as const,
+        viewMode,
+      };
+
+      utils.knowledge.advancedSearch.invalidate(currentAdvancedSearchInput as any);
+      utils.knowledge.advancedSearch.invalidate(defaultAdvancedSearchInput as any);
+      clearFilters();
+      setCatTrigger(v => !v);
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : "删除失败，请重试";
+      toast.error(msg);
     },
   });
 
@@ -252,6 +370,8 @@ export default function Knowledge() {
   function handleSelectArticle(id: number) {
     setSelectedId(selectedId === id ? null : id);
     setEditMode(false);
+    setEditTitleMode(false);
+    setEditTitle("");
     setActiveTab("content");
     if (id !== selectedId) {
       recordView.mutate({ articleId: id });
@@ -280,16 +400,6 @@ export default function Knowledge() {
   const hotThreshold = maxViews * 0.6;
 
   const selectedArticle = articles?.find((a: any) => a.id === selectedId);
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <BookOpen className="w-12 h-12 text-sky-400" />
-        <h2 className="font-display text-xl font-600">请先登录</h2>
-        <Button onClick={openLoginModal}>登录使用</Button>
-      </div>
-    );
-  }
 
   return (
     <div className="pb-8 min-h-screen">
@@ -347,7 +457,16 @@ export default function Knowledge() {
                   <Input placeholder="邀请协作成员（用户名，逗号分隔）" value={form.collaborators} onChange={e => setForm(p => ({ ...p, collaborators: e.target.value }))} className="rounded-xl pl-9" />
                 </div>
                 <Textarea placeholder="知识内容..." value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} className="rounded-xl min-h-48 resize-none" />
-                <Button className="w-full rounded-xl" onClick={() => create.mutate({ title: form.title, content: form.content, tags: form.tags.split(",").map(t => t.trim()).filter(Boolean), category: form.category })} disabled={create.isPending}>
+                <Button
+                  className="w-full rounded-xl"
+                  onClick={() => create.mutate({
+                    title: form.title.trim(),
+                    content: form.content.trim(),
+                    tags: form.tags.split(",").map(t => t.trim()).filter(Boolean),
+                    category: form.category.trim(),
+                  })}
+                  disabled={create.isPending || !form.title.trim() || !form.content.trim()}
+                >
                   {create.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}创建条目
                 </Button>
               </div>
@@ -768,7 +887,22 @@ export default function Knowledge() {
               <div className="px-6 pt-5 pb-4 border-b border-border">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h2 className="font-display text-lg font-600 leading-tight mb-1.5">{detail.title}</h2>
+                    {editTitleMode ? (
+                      <Input
+                        value={editTitle}
+                        onChange={e => setEditTitle(e.target.value)}
+                        className="w-full rounded-xl text-lg font-600 leading-tight mb-1.5"
+                        onKeyDown={e => {
+                          if (e.key !== "Enter") return;
+                          e.preventDefault();
+                          const next = editTitle.trim();
+                          if (!next) return;
+                          updateTitle.mutate({ id: detail.id, title: next });
+                        }}
+                      />
+                    ) : (
+                      <h2 className="font-display text-lg font-600 leading-tight mb-1.5">{detail.title}</h2>
+                    )}
                     <div className="flex items-center gap-2 flex-wrap">
                       {detail.category && (
                         <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium border", categoryColors[detail.category] || "bg-gray-100 text-gray-600 border-gray-200")}>
@@ -797,19 +931,73 @@ export default function Knowledge() {
                     </button>
                     {editMode ? (
                       <>
-                        <Button size="sm" variant="outline" className="rounded-xl gap-1.5" onClick={() => setEditMode(false)}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="rounded-xl gap-1.5"
+                          onClick={() => {
+                            setEditMode(false);
+                            setEditTitleMode(false);
+                            setEditTitle("");
+                          }}
+                        >
                           <X className="w-3.5 h-3.5" />取消
                         </Button>
-                        <Button size="sm" className="rounded-xl gap-1.5" onClick={() => update.mutate({ id: detail.id, content: editContent })} disabled={update.isPending}>
+                        <Button
+                          size="sm"
+                          className="rounded-xl gap-1.5"
+                          onClick={() => {
+                            const nextTitle = editTitle.trim();
+                            const titleChanged = nextTitle && nextTitle !== (detail.title || "");
+                            if (titleChanged) {
+                              updateTitle.mutate({ id: detail.id, title: nextTitle });
+                            }
+                            update.mutate({ id: detail.id, content: editContent });
+                          }}
+                          disabled={update.isPending || updateTitle.isPending}
+                        >
                           {update.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}保存
                         </Button>
                       </>
                     ) : (
-                      <Button size="sm" variant="outline" className="rounded-xl gap-1.5" onClick={() => { setEditMode(true); setEditContent(detail.content); }}>
-                        <Edit3 className="w-3.5 h-3.5" />编辑
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-xl gap-1.5"
+                        onClick={() => {
+                          setEditMode(true);
+                          setEditTitleMode(true);
+                          setEditTitle(detail.title || "");
+                          setEditContent(detail.content);
+                        }}
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        编辑
                       </Button>
                     )}
-                    <button onClick={() => setSelectedId(null)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="rounded-xl gap-1.5 text-red-600 border-red-200 hover:text-red-700"
+                      onClick={() => {
+                        const ok = window.confirm("确定删除该知识条目吗？删除后无法恢复。");
+                        if (!ok) return;
+                        deleteArticle.mutate({ id: detail.id });
+                      }}
+                      disabled={deleteArticle.isPending || updateTitle.isPending || update.isPending}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      删除
+                    </Button>
+                    <button
+                      onClick={() => {
+                        setSelectedId(null);
+                        setEditMode(false);
+                        setEditTitleMode(false);
+                        setEditTitle("");
+                      }}
+                      className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                    >
                       <X className="w-4 h-4" />
                     </button>
                   </div>

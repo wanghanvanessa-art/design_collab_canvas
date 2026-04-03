@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>京东金融 B 端页面原型</title>
+    <style>
+      :root {
+        --bg: #f7f8fa;
+        --surface: #ffffff;
+        --text: #191919;
+        --text-subtle: #8c8c8c;
+        --primary: #2c68ff;
+        --line: #eceff3;
+        --hover: #f5f8ff;
+        --selected: #eef2fe;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .topbar {
+        height: 64px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+      }
+      .brand { font-size: 18px; font-weight: 600; }
+      .sub { color: var(--text-subtle); font-size: 14px; }
+      .shell {
+        width: 1408px;
+        margin: 16px auto;
+        display: flex;
+        gap: 16px;
+      }
+      .side {
+        width: 216px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .nav-item {
+        height: 40px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        font-size: 14px;
+        color: #333;
+      }
+      .nav-item.active {
+        background: var(--selected);
+        color: var(--primary);
+        font-weight: 600;
+      }
+      .main {
+        flex: 1;
+        min-width: 0;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .filters {
+        padding: 16px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .field { display: flex; flex-direction: column; gap: 6px; }
+      .label { font-size: 12px; color: var(--text-subtle); }
+      .input {
+        height: 36px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: #fff;
+        padding: 0 10px;
+        font-size: 14px;
+        color: #333;
+      }
+      .actions {
+        margin-top: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+      }
+      .btns { display: flex; gap: 8px; }
+      .btn {
+        height: 32px;
+        border-radius: 4px;
+        border: 1px solid var(--line);
+        background: #fff;
+        padding: 0 12px;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .btn.primary {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: #fff;
+      }
+      .table-wrap {
+        margin-top: 12px;
+        overflow: hidden;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        line-height: 22px;
+      }
+      thead tr {
+        height: 48px;
+        background: #f7f8fa;
+      }
+      th, td {
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        padding: 0 16px;
+        white-space: nowrap;
+      }
+      tbody tr { height: 48px; }
+      tbody tr:hover { background: var(--hover); }
+      tbody tr.selected { background: var(--selected); }
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        height: 24px;
+        padding: 0 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        border: 1px solid transparent;
+      }
+      .tag.ok { background: #ecfdf3; color: #027a48; border-color: #abefc6; }
+      .tag.run { background: #eff4ff; color: #2c68ff; border-color: #c7d7ff; }
+      .tag.err { background: #fef3f2; color: #b42318; border-color: #fecdca; }
+      .pagination {
+        height: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+      }
+      .pager { display: flex; gap: 8px; align-items: center; }
+      .pg {
+        width: 30px;
+        height: 30px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: #fff;
+        color: #333;
+      }
+      .pg.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">领航者 AI 营销平台</div>
+      <div class="sub">消息通知 · 帮助文档 · 系统平台</div>
+    </header>
+
+    <div class="shell">
+      <aside class="side">
+        <div class="nav-item">一级导航</div>
+        <div class="nav-item active">表格查询</div>
+        <div class="nav-item">任务中心</div>
+      </aside>
+
+      <main class="main">
+        <section class="card">
+          <div class="filters">
+            <div class="field">
+              <label class="label">场景任务名称</label>
+              <input class="input" value="请输入" />
+            </div>
+            <div class="field">
+              <label class="label">场景任务 ID</label>
+              <input class="input" value="请输入" />
+            </div>
+            <div class="field">
+              <label class="label">修改人</label>
+              <input class="input" value="请选择" />
+            </div>
+            <div class="field">
+              <label class="label">任务状态</label>
+              <input class="input" value="全部" />
+            </div>
+          </div>
+        </section>
+
+        <div class="actions">
+          <div class="btns">
+            <button class="btn primary">查询</button>
+            <button class="btn">重置</button>
+          </div>
+          <div class="btns">
+            <button class="btn primary">新建任务</button>
+            <button class="btn">批量复制任务ID</button>
+            <button class="btn">显示隐藏字段</button>
+          </div>
+        </div>
+
+        <section class="card table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>主任务名称</th>
+                <th>主任务ID</th>
+                <th>创建时间</th>
+                <th>任务状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>金融APP-新用户首次登录</td>
+                <td>28777</td>
+                <td>2024-08-21 07:40</td>
+                <td><span class="tag run">进行中</span></td>
+                <td>编辑 · 复制 · 更多</td>
+              </tr>
+              <tr class="selected">
+                <td>白条促激活并首活任务</td>
+                <td>28662</td>
+                <td>2024-08-20 15:10</td>
+                <td><span class="tag ok">已完成</span></td>
+                <td>编辑 · 复制 · 更多</td>
+              </tr>
+              <tr>
+                <td>巡检UI自动化-创建外部换量任务</td>
+                <td>28587</td>
+                <td>2024-08-19 09:20</td>
+                <td><span class="tag err">异常</span></td>
+                <td>编辑 · 复制 · 更多</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="pagination">
+            <div class="sub">共 120 条</div>
+            <div class="pager">
+              <span class="pg">‹</span>
+              <span class="pg active">1</span>
+              <span class="pg">2</span>
+              <span class="pg">3</span>
+              <span class="sub">跳至 2 页 · 10条/页</span>
+              <span class="pg">›</span>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

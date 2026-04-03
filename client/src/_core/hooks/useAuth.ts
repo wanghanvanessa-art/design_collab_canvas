@@ -1,14 +1,7 @@
 import { trpc } from "@/lib/trpc";
-import { openLoginModal } from "@/lib/loginModal";
-import { TRPCClientError } from "@trpc/client";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
-type UseAuthOptions = {
-  redirectOnUnauthenticated?: boolean;
-};
-
-export function useAuth(options?: UseAuthOptions) {
-  const { redirectOnUnauthenticated = false } = options ?? {};
+export function useAuth() {
   const utils = trpc.useUtils();
 
   const meQuery = trpc.auth.me.useQuery(undefined, {
@@ -48,19 +41,6 @@ export function useAuth(options?: UseAuthOptions) {
     meQuery.isLoading,
     logoutMutation.error,
     logoutMutation.isPending,
-  ]);
-
-  useEffect(() => {
-    if (!redirectOnUnauthenticated) return;
-    if (meQuery.isLoading || logoutMutation.isPending) return;
-    if (state.user) return;
-    // Open login modal instead of redirecting to OAuth
-    openLoginModal();
-  }, [
-    redirectOnUnauthenticated,
-    logoutMutation.isPending,
-    meQuery.isLoading,
-    state.user,
   ]);
 
   return {

@@ -1,6 +1,4 @@
-import { openLoginModal } from "@/lib/loginModal";
 import { useState } from "react";
-import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -9,17 +7,18 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
-import { Users, Plus, Sparkles, Loader2, Tag, AlertTriangle, Lightbulb, X, ChevronRight } from "lucide-react";
+import { Users, Plus, Sparkles, Loader2, Tag, AlertTriangle, Lightbulb, X, ChevronRight, Edit3, Trash2 } from "lucide-react";
 import { BackButton } from "@/components/BackButton";
 
 export default function Interviews() {
-  const { isAuthenticated } = useAuth();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [form, setForm] = useState({ title: "", interviewee: "", content: "", date: "" });
+  const [editForm, setEditForm] = useState({ title: "", interviewee: "", content: "", date: "" });
   const utils = trpc.useUtils();
 
-  const { data: interviews, isLoading } = trpc.interviews.list.useQuery(undefined, { enabled: isAuthenticated });
+  const { data: interviews, isLoading } = trpc.interviews.list.useQuery();
   const { data: detail } = trpc.interviews.get.useQuery({ id: selectedId! }, { enabled: !!selectedId });
 
   const create = trpc.interviews.create.useMutation({
@@ -40,15 +39,33 @@ export default function Interviews() {
     onError: () => toast.error("分析失败，请重试"),
   });
 
-  if (!isAuthenticated) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <Users className="w-12 h-12 text-emerald-400" />
-        <h2 className="font-display text-xl font-600">请先登录</h2>
-        <Button onClick={openLoginModal}>登录使用</Button>
-      </div>
-    );
-  }
+  const update = trpc.interviews.update.useMutation({
+    onSuccess: () => {
+      toast.success("访谈记录已更新");
+      setEditOpen(false);
+      setEditForm({ title: "", interviewee: "", content: "", date: "" });
+      if (selectedId) utils.interviews.get.invalidate({ id: selectedId });
+      utils.interviews.list.invalidate();
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : "更新失败，请重试";
+      toast.error(msg);
+    },
+  });
+
+  const remove = trpc.interviews.delete.useMutation({
+    onSuccess: () => {
+      toast.success("访谈记录已删除");
+      setEditOpen(false);
+      setEditForm({ title: "", interviewee: "", content: "", date: "" });
+      setSelectedId(null);
+      utils.interviews.list.invalidate();
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : "删除失败，请重试";
+      toast.error(msg);
+    },
+  });
 
   return (
     <div className="pb-8">
@@ -76,6 +93,53 @@ export default function Interviews() {
               <Textarea placeholder="访谈内容记录..." value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} className="rounded-xl min-h-40 resize-none" />
               <Button className="w-full rounded-xl" onClick={() => create.mutate({ title: form.title, interviewee: form.interviewee, content: form.content, date: form.date || undefined })} disabled={create.isPending}>
                 {create.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}创建访谈
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent className="rounded-2xl max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="font-display">编辑访谈记录</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 pt-2">
+              <Input
+                placeholder="访谈主题"
+                value={editForm.title}
+                onChange={e => setEditForm(p => ({ ...p, title: e.target.value }))}
+                className="rounded-xl"
+              />
+              <Input
+                placeholder="受访者姓名/角色"
+                value={editForm.interviewee}
+                onChange={e => setEditForm(p => ({ ...p, interviewee: e.target.value }))}
+                className="rounded-xl"
+              />
+              <Input
+                type="date"
+                value={editForm.date}
+                onChange={e => setEditForm(p => ({ ...p, date: e.target.value }))}
+                className="rounded-xl"
+              />
+              <Textarea
+                placeholder="访谈内容记录..."
+                value={editForm.content}
+                onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))}
+                className="rounded-xl min-h-40 resize-none"
+              />
+              <Button
+                className="w-full rounded-xl"
+                onClick={() => update.mutate({
+                  id: selectedId!,
+                  title: editForm.title,
+                  interviewee: editForm.interviewee || undefined,
+                  content: editForm.content || undefined,
+                  date: editForm.date || undefined,
+                })}
+                disabled={update.isPending || !selectedId}
+              >
+                {update.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                保存
               </Button>
             </div>
           </DialogContent>
@@ -133,7 +197,7 @@ export default function Interviews() {
               <p className="text-sm">选择左侧访谈记录查看详情</p>
             </div>
           ) : detail ? (
-            <div className="p-6 rounded-2xl border bg-card animate-slide-up">
+            <div className="p-6 rounded-2xl border bg-card animate-slide-up flex flex-col min-h-[420px]">
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <h2 className="font-display text-lg font-600">{detail.title}</h2>
@@ -151,6 +215,38 @@ export default function Interviews() {
                       AI 分析
                     </Button>
                   )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="rounded-xl gap-1.5"
+                    onClick={() => {
+                      setEditForm({
+                        title: detail.title || "",
+                        interviewee: detail.interviewee || "",
+                        content: detail.content || "",
+                        date: detail.date || "",
+                      });
+                      setEditOpen(true);
+                    }}
+                    disabled={analyze.isPending || update.isPending || remove.isPending}
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    编辑
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="rounded-xl gap-1.5 text-red-600 border-red-200 hover:text-red-700"
+                    onClick={() => {
+                      const ok = window.confirm("确定删除该访谈记录吗？删除后无法恢复。");
+                      if (!ok) return;
+                      remove.mutate({ id: detail.id });
+                    }}
+                    disabled={analyze.isPending || update.isPending || remove.isPending}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    删除
+                  </Button>
                   <button onClick={() => setSelectedId(null)} className="text-muted-foreground hover:text-foreground">
                     <X className="w-4 h-4" />
                   </button>
@@ -165,8 +261,8 @@ export default function Interviews() {
 
               {/* Analysis Results */}
               {detail.status === "done" && (
-                <div className="space-y-4">
-                  {/* Audience Labels */}
+                <div className="mt-auto pt-2 space-y-4">
+                  {/* Audience Labels (可选) */}
                   {(detail.audienceLabels as string[])?.length > 0 && (
                     <div>
                       <div className="flex items-center gap-2 mb-2">
@@ -181,41 +277,46 @@ export default function Interviews() {
                     </div>
                   )}
 
-                  {/* Pain Points */}
-                  {(detail.painPoints as string[])?.length > 0 && (
-                    <div>
+                  {/* Bottom: Pain summary + design solutions */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 rounded-xl bg-amber-50 border border-amber-100">
                       <div className="flex items-center gap-2 mb-2">
                         <AlertTriangle className="w-4 h-4 text-amber-600" />
-                        <p className="text-sm font-medium">用户痛点</p>
+                        <p className="text-sm font-medium text-amber-900">用户痛点总结概括</p>
                       </div>
-                      <div className="space-y-2">
-                        {(detail.painPoints as string[]).map((point, i) => (
-                          <div key={i} className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-100">
-                            <span className="text-amber-600 text-xs font-bold shrink-0 mt-0.5">{i + 1}</span>
-                            <p className="text-xs text-amber-800">{point}</p>
-                          </div>
-                        ))}
-                      </div>
+                      {(detail.painPoints as string[])?.length > 0 ? (
+                        <div className="space-y-2">
+                          {(detail.painPoints as string[]).slice(0, 5).map((point, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                              <span className="text-amber-600 text-xs font-bold shrink-0 mt-0.5">{i + 1}</span>
+                              <p className="text-xs text-amber-900/90 leading-relaxed">{point}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">暂无痛点总结</p>
+                      )}
                     </div>
-                  )}
 
-                  {/* Design Solutions */}
-                  {(detail.designSolutions as string[])?.length > 0 && (
-                    <div>
+                    <div className="p-4 rounded-xl bg-violet-50 border border-violet-100">
                       <div className="flex items-center gap-2 mb-2">
                         <Lightbulb className="w-4 h-4 text-violet-600" />
-                        <p className="text-sm font-medium">设计解决方案建议</p>
+                        <p className="text-sm font-medium text-violet-900">设计方案解决建议</p>
                       </div>
-                      <div className="space-y-2">
-                        {(detail.designSolutions as string[]).map((sol, i) => (
-                          <div key={i} className="flex items-start gap-2 p-3 rounded-xl bg-violet-50 border border-violet-100">
-                            <Lightbulb className="w-3.5 h-3.5 text-violet-500 shrink-0 mt-0.5" />
-                            <p className="text-xs text-violet-800">{sol}</p>
-                          </div>
-                        ))}
-                      </div>
+                      {(detail.designSolutions as string[])?.length > 0 ? (
+                        <div className="space-y-2">
+                          {(detail.designSolutions as string[]).slice(0, 5).map((sol, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                              <Lightbulb className="w-3.5 h-3.5 text-violet-500 shrink-0 mt-0.5" />
+                              <p className="text-xs text-violet-900/90 leading-relaxed">{sol}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">暂无解决建议</p>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
 

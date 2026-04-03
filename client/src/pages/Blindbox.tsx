@@ -1,6 +1,4 @@
-import { openLoginModal } from "@/lib/loginModal";
 import { useState, useEffect } from "react";
-import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -81,7 +79,6 @@ function Particles({ active }: { active: boolean }) {
 type BoxState = "idle" | "shaking" | "opening" | "opened";
 
 export default function Blindbox() {
-  const { isAuthenticated } = useAuth();
   const [boxState, setBoxState] = useState<BoxState>("idle");
   const [showParticles, setShowParticles] = useState(false);
   const [showResult, setShowResult] = useState(false);
@@ -134,16 +131,6 @@ export default function Blindbox() {
     // 重置 mutation 状态，确保下次抽取时按钮恢复正常
     saveToKnowledge.reset();
   };
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <div className="text-5xl">🎁</div>
-        <h2 className="font-display text-xl font-600">请先登录</h2>
-        <Button onClick={openLoginModal}>登录使用</Button>
-      </div>
-    );
-  }
 
   const typeInfo = currentItem ? (typeConfig[currentItem.type] || typeConfig.tip) : null;
 

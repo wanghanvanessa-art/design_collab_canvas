@@ -10,6 +10,7 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
+    "ingest:follow-builders": "node -e \"const u=process.env.INGEST_URL||'http://localhost:3001';const s=process.env.KNOWLEDGE_INGEST_SECRET;if(!s){console.error('Set KNOWLEDGE_INGEST_SECRET');process.exit(1)}fetch(u+'/api/ingest/follow-builders',{method:'POST',headers:{Authorization:'Bearer '+s}}).then(r=>r.json()).then(j=>console.log(JSON.stringify(j,null,2))).catch(e=>{console.error(e);process.exit(1)})\"",
     "db:push": "drizzle-kit generate && drizzle-kit migrate"
   },
   "dependencies": {

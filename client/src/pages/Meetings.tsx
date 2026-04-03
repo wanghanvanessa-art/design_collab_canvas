@@ -1,6 +1,4 @@
-import { openLoginModal } from "@/lib/loginModal";
 import { useState, useRef, useEffect } from "react";
-import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +13,7 @@ import {
   Mic2, Upload, Plus, CheckCircle2, Circle, Clock, User,
   Loader2, FileAudio, Trash2, AlertCircle,
   Sparkles, ListTodo, ArrowRight, ExternalLink,
-  MicOff, Square, BookOpen, Check,
+  MicOff, Square, BookOpen, Check, Pause,
 } from "lucide-react";
 import { BackButton } from "@/components/BackButton";
 
@@ -129,7 +127,6 @@ function SaveToKnowledgeDialog({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function Meetings() {
-  const { isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [newTodoOpen, setNewTodoOpen] = useState(false);
@@ -151,11 +148,19 @@ export default function Meetings() {
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Real-time transcription state
+  const [transcriptSegments, setTranscriptSegments] = useState<string[]>([]);
+  const [interimTranscript, setInterimTranscript] = useState("");
+  const recognitionRef = useRef<any>(null);
+  const shouldRestartRecognitionRef = useRef(false);
+  const recordingStateRef = useRef<RecordingState>("idle");
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
+
   // Save to knowledge dialog
   const [saveKnowledgeMeeting, setSaveKnowledgeMeeting] = useState<any>(null);
 
-  const { data: meetings, isLoading: meetingsLoading } = trpc.meetings.list.useQuery(undefined, { enabled: isAuthenticated });
-  const { data: todos, isLoading: todosLoading } = trpc.todos.list.useQuery({ priority: filterPriority === "all" ? undefined : filterPriority as any }, { enabled: isAuthenticated });
+  const { data: meetings, isLoading: meetingsLoading } = trpc.meetings.list.useQuery();
+  const { data: todos, isLoading: todosLoading } = trpc.todos.list.useQuery({ priority: filterPriority === "all" ? undefined : filterPriority as any });
 
   const uploadMeeting = trpc.meetings.upload.useMutation({
     onSuccess: () => {
@@ -214,25 +219,111 @@ export default function Meetings() {
       };
       mr.start(200);
       mediaRecorderRef.current = mr;
+      recordingStateRef.current = "recording";
       setRecordingState("recording");
       setRecordSeconds(0);
       timerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+
+      // ── Start real-time speech recognition ──────────────────────────────
+      const SpeechRecognitionAPI =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognitionAPI) {
+        const recognition = new SpeechRecognitionAPI();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = "zh-CN";
+
+        recognition.onresult = (event: any) => {
+          let interim = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const text = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              setTranscriptSegments(prev => {
+                const segs = [...prev];
+                if (segs.length === 0 || segs[segs.length - 1].length > 80) {
+                  segs.push(text);
+                } else {
+                  segs[segs.length - 1] += text;
+                }
+                return segs;
+              });
+              setInterimTranscript("");
+            } else {
+              interim += text;
+            }
+          }
+          if (interim) setInterimTranscript(interim);
+        };
+
+        recognition.onerror = () => {};
+
+        // Auto-restart when recognition ends if still recording
+        recognition.onend = () => {
+          if (shouldRestartRecognitionRef.current) {
+            try { recognition.start(); } catch {}
+          }
+        };
+
+        shouldRestartRecognitionRef.current = true;
+        recognition.start();
+        recognitionRef.current = recognition;
+      }
     } catch {
       toast.error("无法访问麦克风，请检查权限设置");
     }
   };
 
   const stopRecording = () => {
+    shouldRestartRecognitionRef.current = false;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
     if (timerRef.current) clearInterval(timerRef.current);
+    setInterimTranscript("");
+    recordingStateRef.current = "idle";
     setRecordingState("idle");
+  };
+
+  const pauseRecording = () => {
+    shouldRestartRecognitionRef.current = false;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.pause();
+    }
+    if (timerRef.current) clearInterval(timerRef.current);
+    setInterimTranscript("");
+    recordingStateRef.current = "paused";
+    setRecordingState("paused");
+  };
+
+  const resumeRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "paused") {
+      mediaRecorderRef.current.resume();
+    }
+    if (recognitionRef.current) {
+      shouldRestartRecognitionRef.current = true;
+      try { recognitionRef.current.start(); } catch {}
+    }
+    timerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    recordingStateRef.current = "recording";
+    setRecordingState("recording");
   };
 
   useEffect(() => {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
+
+  // Auto-scroll transcript to bottom when new content arrives
+  useEffect(() => {
+    if (transcriptScrollRef.current) {
+      transcriptScrollRef.current.scrollTop = transcriptScrollRef.current.scrollHeight;
+    }
+  }, [transcriptSegments, interimTranscript]);
 
   const handleUploadRecording = async () => {
     if (!recordTitle.trim()) { toast.error("请输入会议标题"); return; }
@@ -245,7 +336,12 @@ export default function Meetings() {
       formData.append("audio", file);
       const uploadRes = await fetch("/api/upload/audio", { method: "POST", body: formData });
       const { url } = await uploadRes.json();
-      await uploadMeeting.mutateAsync({ title: recordTitle, audioUrl: url });
+      const transcript = transcriptSegments.map(s => s.trim()).filter(Boolean).join("\n").trim();
+      await uploadMeeting.mutateAsync({
+        title: recordTitle,
+        audioUrl: url,
+        transcript: transcript || undefined,
+      });
     } catch {
       toast.error("上传失败，请重试");
     } finally {
@@ -277,16 +373,6 @@ export default function Meetings() {
       setUploading(false);
     }
   };
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <Mic2 className="w-12 h-12 text-violet-400" />
-        <h2 className="font-display text-xl font-600">请先登录</h2>
-        <Button onClick={openLoginModal}>登录使用</Button>
-      </div>
-    );
-  }
 
   const pendingTodos = todos?.filter(t => !t.completed) || [];
   const doneTodos = todos?.filter(t => t.completed) || [];
@@ -333,7 +419,7 @@ export default function Meetings() {
 
           {/* Direct Recording Dialog */}
           <Dialog open={recordOpen} onOpenChange={(v) => {
-            if (!v) { stopRecording(); setAudioBlob(null); setRecordSeconds(0); }
+            if (!v) { stopRecording(); setAudioBlob(null); setRecordSeconds(0); setTranscriptSegments([]); setInterimTranscript(""); }
             setRecordOpen(v);
           }}>
             <DialogTrigger asChild>
@@ -341,9 +427,9 @@ export default function Meetings() {
                 <Mic2 className="w-4 h-4" />直接录音
               </Button>
             </DialogTrigger>
-            <DialogContent className="rounded-2xl max-w-sm">
+            <DialogContent className="rounded-2xl max-w-3xl w-full h-[760px] flex flex-col">
               <DialogHeader><DialogTitle className="font-display">直接录制会议</DialogTitle></DialogHeader>
-              <div className="space-y-4 pt-2">
+              <div className="flex flex-col gap-4 pt-2 flex-1 min-h-0">
                 <Input
                   placeholder="会议标题"
                   value={recordTitle}
@@ -351,19 +437,73 @@ export default function Meetings() {
                   className="rounded-xl"
                 />
 
-                {/* Recording visualizer */}
+                {/* ── Real-time transcription area (60%+ of dialog space) ── */}
+                <div className="flex flex-col gap-2 flex-[0.62] min-h-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-gray-500 flex items-center gap-1.5">
+                      <span className={cn(
+                        "w-1.5 h-1.5 rounded-full transition-colors",
+                        recordingState === "recording" ? "bg-rose-500 animate-pulse" :
+                        recordingState === "paused" ? "bg-amber-400" : "bg-gray-300"
+                      )} />
+                      实时转写
+                    </span>
+                    {(transcriptSegments.length > 0 || interimTranscript) && (
+                      <button
+                        onClick={() => { setTranscriptSegments([]); setInterimTranscript(""); }}
+                        className="text-[10px] text-gray-400 hover:text-gray-600 transition-colors"
+                      >
+                        清空
+                      </button>
+                    )}
+                  </div>
+                  <div
+                    ref={transcriptScrollRef}
+                    className="flex-1 min-h-0 overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-4"
+                    style={{ fontSize: "16px", lineHeight: "1.5" }}
+                  >
+                    {transcriptSegments.length === 0 && !interimTranscript ? (
+                      <div className="h-full flex flex-col items-center justify-center gap-2 text-gray-400">
+                        <Mic2 className="w-8 h-8 opacity-20" />
+                        <p className="text-sm text-center">
+                          {recordingState === "idle" && !audioBlob ? "开始录音后，语音将实时转为文字" :
+                           recordingState === "recording" ? "正在倾听，请说话..." :
+                           recordingState === "paused" ? "录音已暂停" :
+                           audioBlob ? "转写内容已记录完毕" : ""}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 text-gray-800">
+                        {transcriptSegments.map((seg, i) => (
+                          <p
+                            key={i}
+                            className="whitespace-pre-wrap"
+                            style={{ fontSize: "16px", lineHeight: "1.5" }}
+                          >
+                            {seg}
+                          </p>
+                        ))}
+                        {interimTranscript && (
+                          <p className="text-gray-400 italic whitespace-pre-wrap" style={{ fontSize: "16px", lineHeight: "1.5" }}>
+                            {interimTranscript}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Recording controls ───────────────────────────────────── */}
                 <div className={cn(
-                  "flex flex-col items-center gap-4 p-6 rounded-2xl border-2 transition-all",
-                  recordingState === "recording"
-                    ? "border-rose-300 bg-rose-50"
-                    : audioBlob
-                    ? "border-emerald-300 bg-emerald-50"
-                    : "border-dashed border-gray-200 bg-gray-50"
+                  "flex flex-col items-center gap-3 p-4 rounded-2xl border-2 transition-all",
+                  recordingState === "recording" ? "border-rose-300 bg-rose-50" :
+                  recordingState === "paused" ? "border-amber-300 bg-amber-50" :
+                  audioBlob ? "border-emerald-300 bg-emerald-50" :
+                  "border-dashed border-gray-200 bg-gray-50"
                 )}>
                   {recordingState === "recording" ? (
                     <>
-                      {/* Animated waveform */}
-                      <div className="flex items-center gap-1 h-10">
+                      <div className="flex items-center gap-1 h-8">
                         {[...Array(12)].map((_, i) => (
                           <div
                             key={i}
@@ -381,25 +521,63 @@ export default function Meetings() {
                         <span className="text-sm font-medium">录音中</span>
                         <RecordingTimer seconds={recordSeconds} />
                       </div>
-                      <Button
-                        variant="outline"
-                        className="rounded-xl border-rose-300 text-rose-600 hover:bg-rose-100 gap-2"
-                        onClick={stopRecording}
-                      >
-                        <Square className="w-4 h-4" />停止录音
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-xl border-amber-300 text-amber-600 hover:bg-amber-100 gap-1.5"
+                          onClick={pauseRecording}
+                        >
+                          <Pause className="w-3.5 h-3.5" />暂停录音
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-xl border-rose-300 text-rose-600 hover:bg-rose-100 gap-1.5"
+                          onClick={stopRecording}
+                        >
+                          <Square className="w-3.5 h-3.5" />停止录音
+                        </Button>
+                      </div>
+                    </>
+                  ) : recordingState === "paused" ? (
+                    <>
+                      <div className="flex items-center gap-2 text-amber-600">
+                        <Pause className="w-5 h-5" />
+                        <span className="text-sm font-medium">已暂停</span>
+                        <RecordingTimer seconds={recordSeconds} />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          className="rounded-xl bg-rose-500 hover:bg-rose-600 text-white gap-1.5"
+                          onClick={resumeRecording}
+                        >
+                          <Mic2 className="w-3.5 h-3.5" />暂停录音
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-xl border-gray-300 text-gray-600 hover:bg-gray-100 gap-1.5"
+                          onClick={stopRecording}
+                        >
+                          <Square className="w-3.5 h-3.5" />停止录音
+                        </Button>
+                      </div>
                     </>
                   ) : audioBlob ? (
                     <>
-                      <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
-                        <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                      <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-500" />
                       </div>
                       <div className="text-center">
                         <p className="text-sm font-medium text-emerald-700">录音完成</p>
-                        <p className="text-xs text-emerald-600 mt-0.5">时长 <RecordingTimer seconds={recordSeconds} />，大小 {(audioBlob.size / 1024).toFixed(0)} KB</p>
+                        <p className="text-xs text-emerald-600 mt-0.5">
+                          时长 <RecordingTimer seconds={recordSeconds} />，大小 {(audioBlob.size / 1024).toFixed(0)} KB
+                        </p>
                       </div>
                       <button
-                        onClick={() => { setAudioBlob(null); setRecordSeconds(0); }}
+                        onClick={() => { setAudioBlob(null); setRecordSeconds(0); setTranscriptSegments([]); setInterimTranscript(""); }}
                         className="text-xs text-gray-400 hover:text-gray-600 underline"
                       >
                         重新录制
@@ -407,15 +585,16 @@ export default function Meetings() {
                     </>
                   ) : (
                     <>
-                      <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center">
-                        <Mic2 className="w-6 h-6 text-gray-400" />
+                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                        <Mic2 className="w-5 h-5 text-gray-400" />
                       </div>
                       <p className="text-sm text-gray-500 text-center">点击开始录制会议音频</p>
                       <Button
-                        className="rounded-xl bg-rose-500 hover:bg-rose-600 text-white gap-2"
+                        size="sm"
+                        className="rounded-xl bg-rose-500 hover:bg-rose-600 text-white gap-1.5"
                         onClick={startRecording}
                       >
-                        <Mic2 className="w-4 h-4" />开始录音
+                        <Mic2 className="w-3.5 h-3.5" />开始录音
                       </Button>
                     </>
                   )}

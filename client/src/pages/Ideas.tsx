@@ -1,7 +1,5 @@
-import { openLoginModal } from "@/lib/loginModal";
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,13 +12,12 @@ import { Lightbulb, Plus, MessageCircle, Heart, Loader2, ArrowRight } from "luci
 import { BackButton } from "@/components/BackButton";
 
 export default function Ideas() {
-  const { isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
   const [createOpen, setCreateOpen] = useState(false);
   const [newIdea, setNewIdea] = useState({ title: "", content: "", tags: "" });
   const utils = trpc.useUtils();
 
-  const { data: ideas, isLoading } = trpc.ideas.list.useQuery(undefined, { enabled: isAuthenticated });
+  const { data: ideas, isLoading } = trpc.ideas.list.useQuery();
 
   const createIdea = trpc.ideas.create.useMutation({
     onSuccess: () => {
@@ -30,16 +27,6 @@ export default function Ideas() {
       utils.ideas.list.invalidate();
     },
   });
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <Lightbulb className="w-12 h-12 text-amber-400" />
-        <h2 className="font-display text-xl font-600">请先登录</h2>
-        <Button onClick={openLoginModal}>登录使用</Button>
-      </div>
-    );
-  }
 
   const tagColors = ["bg-violet-100 text-violet-700", "bg-emerald-100 text-emerald-700", "bg-amber-100 text-amber-700", "bg-sky-100 text-sky-700", "bg-pink-100 text-pink-700"];
 

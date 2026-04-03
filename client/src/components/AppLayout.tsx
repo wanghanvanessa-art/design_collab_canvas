@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
-import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import PixelCat from "@/components/PixelCat";
@@ -16,8 +14,6 @@ import {
   Home,
   ChevronLeft,
   ChevronRight,
-  LogIn,
-  LogOut,
   Gift,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -39,7 +35,7 @@ interface AppLayoutProps {
 export default function AppLayout({ children }: AppLayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [location] = useLocation();
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user } = useAuth();
   const [activityLevel, setActivityLevel] = useState(0);
   const activityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -150,55 +146,27 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
         {/* User & Collapse */}
         <div className="border-t border-border p-2 space-y-1 shrink-0">
-          {/* User */}
-          {isAuthenticated ? (
-            <Tooltip delayDuration={0}>
-              <TooltipTrigger asChild>
-                <div className={cn(
-                  "flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-accent/60 cursor-pointer transition-colors",
-                  collapsed && "justify-center px-2"
-                )}>
-                  <Avatar className="w-7 h-7 shrink-0">
-                    <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">
-                      {user?.name?.[0]?.toUpperCase() || "U"}
-                    </AvatarFallback>
-                  </Avatar>
-                  {!collapsed && (
-                    <div className="flex-1 overflow-hidden">
-                      <p className="text-xs font-medium truncate">{user?.name || "设计师"}</p>
-                      <p className="text-[10px] text-muted-foreground truncate">{user?.email || ""}</p>
-                    </div>
-                  )}
-                  {!collapsed && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="w-6 h-6 shrink-0 text-muted-foreground hover:text-destructive"
-                      onClick={(e) => { e.preventDefault(); logout(); }}
-                    >
-                      <LogOut className="w-3.5 h-3.5" />
-                    </Button>
-                  )}
-                </div>
-              </TooltipTrigger>
-              {collapsed && <TooltipContent side="right"><p>{user?.name || "设计师"}</p></TooltipContent>}
-            </Tooltip>
-          ) : (
-            <Tooltip delayDuration={0}>
-              <TooltipTrigger asChild>
-                <a href={getLoginUrl()} className={cn(
-                  "flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-primary/10 cursor-pointer transition-colors text-muted-foreground hover:text-primary",
-                  collapsed && "justify-center px-2"
-                )}>
-                  <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                    <LogIn className="w-4 h-4 text-primary" />
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <div className={cn(
+                "flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-accent/60 cursor-default transition-colors",
+                collapsed && "justify-center px-2"
+              )}>
+                <Avatar className="w-7 h-7 shrink-0">
+                  <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">
+                    {user?.name?.[0]?.toUpperCase() || "访"}
+                  </AvatarFallback>
+                </Avatar>
+                {!collapsed && (
+                  <div className="flex-1 overflow-hidden">
+                    <p className="text-xs font-medium truncate">{user?.name || "本地访客"}</p>
+                    <p className="text-[10px] text-muted-foreground truncate">{user?.email || ""}</p>
                   </div>
-                  {!collapsed && <span className="text-sm">登录</span>}
-                </a>
-              </TooltipTrigger>
-              {collapsed && <TooltipContent side="right"><p>登录</p></TooltipContent>}
-            </Tooltip>
-          )}
+                )}
+              </div>
+            </TooltipTrigger>
+            {collapsed && <TooltipContent side="right"><p>{user?.name || "本地访客"}</p></TooltipContent>}
+          </Tooltip>
 
           {/* Collapse toggle */}
           <button

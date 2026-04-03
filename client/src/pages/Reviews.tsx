@@ -1,6 +1,4 @@
-import { openLoginModal } from "@/lib/loginModal";
 import { useState, useRef } from "react";
-import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +31,6 @@ function ScoreRing({ score, label, color }: { score: number; label: string; colo
 }
 
 export default function Reviews() {
-  const { isAuthenticated } = useAuth();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [title, setTitle] = useState("");
@@ -43,7 +40,7 @@ export default function Reviews() {
   const fileRef = useRef<HTMLInputElement>(null);
   const utils = trpc.useUtils();
 
-  const { data: reviews, isLoading } = trpc.reviews.list.useQuery(undefined, { enabled: isAuthenticated });
+  const { data: reviews, isLoading } = trpc.reviews.list.useQuery();
   const { data: detail } = trpc.reviews.get.useQuery({ id: selectedId! }, { enabled: !!selectedId });
   const { data: versions } = trpc.reviews.versions.useQuery({ id: selectedId! }, { enabled: !!selectedId });
 
@@ -72,15 +69,42 @@ export default function Reviews() {
   const handleUpload = async () => {
     if (!title.trim()) { toast.error("请输入方案标题"); return; }
     if (!imageFile) { toast.error("请选择设计稿图片"); return; }
+    // Server limit: 16MB (multer). Pre-check to avoid opaque failures.
+    if (imageFile.size > 16 * 1024 * 1024) {
+      toast.error("图片过大（>16MB），请压缩后再上传");
+      return;
+    }
     setUploading(true);
     try {
       const formData = new FormData();
       formData.append("image", imageFile);
       const res = await fetch("/api/upload/image", { method: "POST", body: formData });
-      const { url } = await res.json();
+      if (!res.ok) {
+        let msg = `上传失败（${res.status}）`;
+        try {
+          const err = await res.json();
+          if (err?.error) msg = err.error;
+        } catch {
+          try {
+            const t = await res.text();
+            if (t) msg = t;
+          } catch {}
+        }
+        throw new Error(msg);
+      }
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        const t = await res.text().catch(() => "");
+        throw new Error(t || "上传失败：服务端未返回 JSON");
+      }
+      const url = data?.url as string | undefined;
+      if (!url) throw new Error("上传失败：未返回图片地址");
       await upload.mutateAsync({ title, designUrl: url });
-    } catch {
-      toast.error("上传失败，请重试");
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message : "上传失败，请重试";
+      toast.error(msg);
     } finally {
       setUploading(false);
     }
@@ -97,16 +121,6 @@ export default function Reviews() {
     if (score >= 60) return { label: "良好", class: "bg-amber-100 text-amber-700 border-amber-200" };
     return { label: "待改进", class: "bg-red-100 text-red-700 border-red-200" };
   };
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <ClipboardCheck className="w-12 h-12 text-indigo-400" />
-        <h2 className="font-display text-xl font-600">请先登录</h2>
-        <Button onClick={openLoginModal}>登录使用</Button>
-      </div>
-    );
-  }
 
   return (
     <div className="pb-8">

@@ -9,11 +9,10 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { storagePut } from "./storage";
 import multer from "multer";
-import { loginUser, registerUser } from "./emailAuth";
-import { sdk } from "./sdk";
-import * as db from "../db";
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
+import { ENV } from "./env";
+import { runFollowBuildersIngest } from "./followBuildersIngest";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -40,80 +39,72 @@ async function startServer() {
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
-  // OAuth callback under /api/oauth/callback (kept for legacy, not used in ERP mode)
+  // OAuth callback under /api/oauth/callback (optional; app uses anonymous guest by default)
   registerOAuthRoutes(app);
 
-  // ── Email Register ────────────────────────────────────────────────────────
-  app.post("/api/auth/email-register", async (req: any, res: any) => {
-    const { email, password, name } = req.body ?? {};
-    try {
-      const user = registerUser(String(email ?? ""), String(password ?? ""), String(name ?? ""));
-
-      await db.upsertUser({
-        openId: `email_${user.id}`,
-        name: user.name,
-        email: user.email,
-        loginMethod: "email",
-        lastSignedIn: new Date(),
-      });
-
-      const sessionToken = await sdk.createSessionToken(`email_${user.id}`, {
-        name: user.name,
-        expiresInMs: ONE_YEAR_MS,
-      });
-      const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-      return res.json({ success: true, user: { email: user.email, name: user.name } });
-    } catch (err: any) {
-      return res.status(400).json({ error: err.message ?? "注册失败" });
-    }
-  });
-
-  // ── Email Login ───────────────────────────────────────────────────────────
-  app.post("/api/auth/email-login", async (req: any, res: any) => {
-    const { email, password } = req.body ?? {};
-    try {
-      const user = loginUser(String(email ?? ""), String(password ?? ""));
-
-      await db.upsertUser({
-        openId: `email_${user.id}`,
-        name: user.name,
-        email: user.email,
-        loginMethod: "email",
-        lastSignedIn: new Date(),
-      });
-
-      const sessionToken = await sdk.createSessionToken(`email_${user.id}`, {
-        name: user.name,
-        expiresInMs: ONE_YEAR_MS,
-      });
-      const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-      return res.json({ success: true, user: { email: user.email, name: user.name } });
-    } catch (err: any) {
-      return res.status(401).json({ error: err.message ?? "登录失败" });
-    }
-  });
-
-  // ── Logout ────────────────────────────────────────────────────────────────
+  // ── Logout (clears cookie; next request still gets guest user) ───────────
   app.post("/api/auth/logout", (req: any, res: any) => {
     const cookieOptions = getSessionCookieOptions(req);
     res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
     return res.json({ success: true });
   });
 
-  // File upload endpoint
-  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } });
-  app.post("/api/upload/image", upload.single("image"), async (req: any, res: any) => {
+  // 每日将 follow-builders 中央 feed 摘要为 10 条中文知识条目（需配置 KNOWLEDGE_INGEST_SECRET）
+  app.post("/api/ingest/follow-builders", async (req: any, res: any) => {
     try {
-      if (!req.file) return res.status(400).json({ error: "No file" });
-      const ext = req.file.originalname.split(".").pop() || "png";
-      const key = `design-reviews/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-      const { url } = await storagePut(key, req.file.buffer, req.file.mimetype);
-      res.json({ url });
+      const secret = ENV.knowledgeIngestSecret;
+      if (!secret) {
+        return res.status(503).json({ error: "KNOWLEDGE_INGEST_SECRET 未配置" });
+      }
+      const auth = req.headers.authorization ?? "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      if (token !== secret) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      const result = await runFollowBuildersIngest();
+      return res.json(result);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      return res.status(500).json({ error: e?.message || "ingest failed" });
     }
+  });
+
+  // File upload endpoint (image)
+  // IMPORTANT: multer may throw BEFORE our handler runs. Wrap it to always return JSON.
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 32 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (!file.mimetype?.startsWith("image/")) return cb(new Error("Only image files are allowed"));
+      cb(null, true);
+    },
+  });
+
+  app.post("/api/upload/image", (req: any, res: any) => {
+    upload.single("image")(req, res, async (err: any) => {
+      try {
+        if (err) {
+          const msg = err?.message || "Upload failed";
+          const status = err?.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+          return res.status(status).json({ error: msg });
+        }
+        if (!req.file) return res.status(400).json({ error: "No file" });
+
+        const ext = req.file.originalname.split(".").pop() || "png";
+        const key = `design-reviews/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+
+        try {
+          const { url } = await storagePut(key, req.file.buffer, req.file.mimetype);
+          return res.json({ url });
+        } catch {
+          // Local preview fallback: when storage proxy (forge) isn't configured.
+          const base64 = req.file.buffer.toString("base64");
+          const url = `data:${req.file.mimetype};base64,${base64}`;
+          return res.json({ url });
+        }
+      } catch (e: any) {
+        return res.status(500).json({ error: e?.message || "Upload failed" });
+      }
+    });
   });
 
   // Audio upload endpoint
@@ -123,8 +114,15 @@ async function startServer() {
       if (!req.file) return res.status(400).json({ error: "No file" });
       const ext = req.file.originalname.split(".").pop() || "mp3";
       const key = `meeting-audio/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-      const { url } = await storagePut(key, req.file.buffer, req.file.mimetype);
-      res.json({ url });
+      try {
+        const { url } = await storagePut(key, req.file.buffer, req.file.mimetype);
+        res.json({ url });
+      } catch {
+        // Local preview fallback: when storage proxy (forge) isn't configured.
+        const base64 = req.file.buffer.toString("base64");
+        const url = `data:${req.file.mimetype};base64,${base64}`;
+        res.json({ url });
+      }
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
