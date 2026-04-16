@@ -340,7 +340,6 @@ export default function Meetings() {
       await uploadMeeting.mutateAsync({
         title: recordTitle,
         audioUrl: url,
-        transcript: transcript || undefined,
       });
     } catch {
       toast.error("上传失败，请重试");

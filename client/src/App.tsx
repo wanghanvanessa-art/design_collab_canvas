@@ -17,6 +17,7 @@ import Reviews from "./pages/Reviews";
 import Blindbox from "./pages/Blindbox";
 import MeetingDetail from "./pages/MeetingDetail";
 import TaskDetailsFigma from "./pages/TaskDetailsFigma";
+import Settings from "./pages/Settings";
 
 // PageLayout wraps all non-home pages with TopNav + PixelCat
 function PageLayout({ children }: { children: React.ReactNode }) {
@@ -80,6 +81,9 @@ function Router() {
       </Route>
       <Route path="/blindbox">
         <PageLayout><Blindbox /></PageLayout>
+      </Route>
+      <Route path="/settings">
+        <PageLayout><Settings /></PageLayout>
       </Route>
       <Route path="/figma-task-details" component={TaskDetailsFigma} />
       <Route path="/404" component={NotFound} />

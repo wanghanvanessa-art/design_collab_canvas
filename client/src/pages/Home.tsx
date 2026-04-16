@@ -531,16 +531,16 @@ export default function Home() {
           {/* ── Right Bento (col 4-12) ── */}
           <div className="col-span-12 lg:col-span-9 flex flex-col gap-4">
 
-            {/* Row 1: Large meetings (left) + 2×2 small grid (right) */}
+            {/* Row 1: Large interviews (left) + 2×2 small grid (right) */}
             <div className="grid grid-cols-3 gap-4">
-              {/* Large: meetings — tall card */}
+              {/* Large: interviews — tall card */}
               <div className="col-span-1">
-                <LargeFeatureCard f={FEATURES[0]} />
+                <LargeFeatureCard f={FEATURES[2]} />
               </div>
-              {/* Right 2×2 small cards: ideas, interviews, knowledge, reviews */}
+              {/* Right 2×2 small cards: ideas, meetings, knowledge, reviews */}
               <div className="col-span-2 grid grid-cols-2 gap-4">
                 <SmallFeatureCard f={FEATURES[1]} />{/* 想法落地页 */}
-                <SmallFeatureCard f={FEATURES[2]} />{/* 用户访谈 */}
+                <SmallFeatureCard f={FEATURES[0]} />{/* 会议转待办 */}
                 <SmallFeatureCard f={FEATURES[3]} />{/* 设计知识库 */}
                 <SmallFeatureCard f={FEATURES[5]} />{/* 方案智能评审 */}
               </div>

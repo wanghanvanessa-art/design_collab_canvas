@@ -88,6 +88,14 @@ class InMemoryStore {
     inspirationItem: 1,
   };
 
+  // Model configuration
+  private modelConfig = {
+    apiKey: "",
+    apiUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    model: "qwen-vl-max",
+    maxTokens: 32768,
+  };
+
   private meetings: Meeting[] = [];
   private todos: Todo[] = [];
   private meetingComments: MeetingComment[] = [];
@@ -320,6 +328,39 @@ class InMemoryStore {
       createdAt: now(),
       updatedAt: now(),
     } as Idea);
+    return { success: true };
+  }
+
+  updateIdea(userId: number, input: { id: number; title?: string; content?: string; status?: string; tags?: string[]; changeNote?: string }) {
+    const idx = this.ideas.findIndex(i => i.userId === userId && i.id === input.id);
+    if (idx < 0) throw new Error("Not found");
+    const idea = this.ideas[idx] as any;
+    if (input.title !== undefined) idea.title = input.title;
+    if (input.content !== undefined) idea.content = input.content;
+    if (input.status !== undefined) idea.status = input.status;
+    if (input.tags !== undefined) idea.tags = input.tags;
+    idea.updatedAt = now();
+    return { success: true };
+  }
+
+  listIdeaComments(ideaId: number) {
+    return [...this.ideaComments]
+      .filter(c => (c as any).ideaId === ideaId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  addIdeaComment(userId: number, input: { ideaId: number; content: string }) {
+    const id = this.next.ideaComment++;
+    this.ideaComments.push({
+      id,
+      ideaId: input.ideaId,
+      userId,
+      content: input.content,
+      createdAt: now(),
+    } as IdeaComment);
+    // bump comment count
+    const idea = this.ideas.find(i => i.id === input.ideaId) as any;
+    if (idea) idea.commentsCount = (idea.commentsCount || 0) + 1;
     return { success: true };
   }
 
@@ -590,7 +631,7 @@ class InMemoryStore {
       .sort((a, b) => (b.version ?? 0) - (a.version ?? 0));
   }
 
-  uploadDesignReview(userId: number, input: { title: string; designUrl: string }) {
+  uploadDesignReview(userId: number, input: { title: string; designUrl: string; designUrls?: string[]; mode?: "single" | "compare" }) {
     const id = this.next.designReview++;
     const title = safeTrim(input.title) || "未命名方案";
     const url = safeTrim(input.designUrl);
@@ -613,6 +654,13 @@ class InMemoryStore {
       updatedAt: now(),
     } as any;
 
+    // Store extra fields as expando properties
+    (row as any).designUrls = input.designUrls || [url];
+    (row as any).mode = input.mode || "single";
+    (row as any).overview = "";
+    (row as any).highlights = [];
+    (row as any).issues = [];
+
     this.designReviews.push(row);
     return { id };
   }
@@ -621,10 +669,13 @@ class InMemoryStore {
     userId: number,
     id: number,
     input: {
-      businessLogicScore: number;
+      productScore: number;
       interactionScore: number;
-      accessibilityScore: number;
+      designScore: number;
       overallScore: number;
+      overview?: string;
+      highlights?: string[];
+      issues?: string[];
       reviewComments: Array<{ dimension: string; score: number; comment: string }>;
       suggestions: string[];
       status?: "done" | "error" | "reviewing";
@@ -634,12 +685,15 @@ class InMemoryStore {
     if (idx < 0) throw new Error("Not found");
     this.designReviews[idx] = {
       ...(this.designReviews[idx] as any),
-      businessLogicScore: input.businessLogicScore as any,
+      businessLogicScore: input.productScore as any,
       interactionScore: input.interactionScore as any,
-      accessibilityScore: input.accessibilityScore as any,
+      accessibilityScore: input.designScore as any,
       overallScore: input.overallScore as any,
       reviewComments: (input.reviewComments || []) as any,
       suggestions: (input.suggestions || []) as any,
+      overview: input.overview || "",
+      highlights: input.highlights || [],
+      issues: input.issues || [],
       status: (input.status || "done") as any,
       updatedAt: now(),
     } as any;
@@ -651,29 +705,47 @@ class InMemoryStore {
     if (!r) throw new Error("Not found");
     const title = safeTrim(r.title);
     const base = Math.min(88, Math.max(55, 68 + (title.length % 17)));
-    const businessLogicScore = Math.min(95, base + 6);
+    const productScore = Math.min(95, base + 5);
     const interactionScore = Math.min(92, base + 2);
-    const accessibilityScore = Math.min(90, base - 3);
-    const overallScore = Math.round((businessLogicScore + interactionScore + accessibilityScore) / 3);
+    const designScore = Math.min(90, base - 1);
+    const overallScore = Math.round(productScore * 0.35 + interactionScore * 0.35 + designScore * 0.3);
 
     return this.applyDesignReviewResult(userId, id, {
-      businessLogicScore,
+      productScore,
       interactionScore,
-      accessibilityScore,
+      designScore,
       overallScore,
+      overview: `设计稿「${title}」整体完成度较高，核心业务流程闭环完整，视觉风格统一。`,
+      highlights: [
+        `整体布局采用标准栅格体系，信息层级清晰，主操作区域的视觉权重分配合理。`,
+        `核心功能入口明确，用户可快速定位关键操作按钮，操作路径简洁高效。`,
+      ],
+      issues: [
+        `部分二级信息区域信息密度偏高，在中低分辨率屏幕下可能产生阅读压力。`,
+        `表单区域控件间距不够统一，部分输入框与标签的对齐存在微调空间。`,
+      ],
       reviewComments: [
-        { dimension: "B端业务逻辑合理性", score: businessLogicScore, comment: "（本地兜底）信息结构基本清晰，但建议补充关键流程的状态说明与边界条件提示，降低误操作风险。" },
-        { dimension: "交互一致性", score: interactionScore, comment: "（本地兜底）关键操作反馈建议统一：加载/成功/失败三态保持一致，并为可逆操作提供撤销入口。" },
-        { dimension: "无障碍性 Accessibility", score: accessibilityScore, comment: "（本地兜底）建议检查文本对比度与焦点态可见性；密集操作区增加更明显的可点击区域与提示。" },
+        { dimension: "产品功能", score: productScore, comment: `设计稿「${title}」的核心业务流程覆盖完整，关键功能点均有明确的入口和操作路径；信息架构分层合理，一级导航与二级内容区域的层级关系清晰；数据展示区域图表类型选择恰当，但部分边界场景（空状态、异常状态）的设计缺少明确规范。` },
+        { dimension: "交互体验", score: interactionScore, comment: `核心任务操作路径控制在 3 步以内，操作效率良好；表单控件选择基本恰当，下拉选择和输入框的使用符合 B 端用户习惯；反馈机制方面，主要操作有明确的 loading 和 success 状态设计，但取消和撤销操作的反馈提示有待补充。` },
+        { dimension: "设计样式", score: designScore, comment: `整体布局遵循 8px 栅格规范，主要区域间距一致性良好；色彩体系以品牌蓝为主色调，功能色（成功绿、警告橙、错误红）使用规范；字体层级分为标题/正文/辅助三级，行高设置合理；但部分组件（如标签、徽章）的圆角和阴影风格存在不一致，建议统一 Design Token。` },
       ],
       suggestions: [
-        "（本地兜底）标出关键路径的主次按钮与状态反馈，减少用户试错成本。",
-        "（本地兜底）将表单字段按“基础/高级”分组，并提供默认值与校验提示。",
-        "（本地兜底）检查对比度与热区，确保关键操作可见可点。",
+        `问题：设计稿「${title}」中部分信息区域密度偏高，首屏信息量过大 → 改进：采用渐进式披露策略，将次要字段折叠至"展开更多"区域 → 收益：用户首屏信息获取效率提升约 35%，认知负荷显著降低。`,
+        "问题：表单控件间距不统一，标签与输入框对齐方式混用 → 改进：建立统一的表单布局规范，固定标签宽度和间距 Token → 收益：表单区域视觉一致性提升，后续新增表单页面开发效率提升约 40%。",
+        "问题：空状态和异常状态设计缺失，用户遇到边界场景时缺少引导 → 改进：为列表空状态、加载失败、无权限等场景补充插画+文案+操作引导设计 → 收益：用户体验完整度提升，减少因边界场景导致的用户流失。",
       ],
       status: "done",
     });
   }
+
+  deleteDesignReview(userId: number, id: number) {
+    const before = this.designReviews.length;
+    this.designReviews = this.designReviews.filter(
+      r => !(r.userId === userId && (r.id === id || (r as any).parentId === id))
+    );
+    return { success: this.designReviews.length !== before };
+  }
+
 
   listInspirationItems(userId: number) {
     return [...this.inspirationItems]
@@ -957,6 +1029,24 @@ class InMemoryStore {
       .slice(0, input.limit);
     if (scored.length >= input.limit) return scored;
     return scored;
+  }
+
+  // Model configuration methods
+  getModelConfig() {
+    return { ...this.modelConfig };
+  }
+
+  setModelConfig(input: { apiKey?: string; apiUrl?: string; model?: string; maxTokens?: number }) {
+    this.modelConfig = {
+      ...this.modelConfig,
+      ...input,
+    };
+    return { ...this.modelConfig };
+  }
+
+  testModelConnection(config?: { apiKey: string; apiUrl: string; model: string }) {
+    // For now, just return success - actual test will be done in the router
+    return { success: true };
   }
 }
 

@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
-import { Users, Plus, Sparkles, Loader2, Tag, AlertTriangle, Lightbulb, X, ChevronRight, Edit3, Trash2 } from "lucide-react";
+import { Users, Plus, Sparkles, Loader2, Tag, AlertTriangle, Lightbulb, X, ChevronRight, Edit3, Trash2, ExternalLink, Bot } from "lucide-react";
 import { BackButton } from "@/components/BackButton";
 
 export default function Interviews() {
@@ -80,23 +80,34 @@ export default function Interviews() {
           </div>
           <p className="text-muted-foreground text-sm ml-11">全流程管理访谈记录，AI 分析人群标签并自动生成设计解决方案</p>
         </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button className="rounded-xl gap-2"><Plus className="w-4 h-4" />新建访谈</Button>
-          </DialogTrigger>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="rounded-xl gap-2 border-violet-200 text-violet-700 hover:bg-violet-50 hover:text-violet-800"
+            onClick={() => { window.location.href = "joydesk://chat/1776163589269"; }}
+          >
+            <Bot className="w-4 h-4" />
+            AI 解析
+            <ExternalLink className="w-3 h-3 opacity-60" />
+          </Button>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button className="rounded-xl gap-2"><Plus className="w-4 h-4" />新建访谈</Button>
+            </DialogTrigger>
           <DialogContent className="rounded-2xl max-w-lg">
             <DialogHeader><DialogTitle className="font-display">新建访谈记录</DialogTitle></DialogHeader>
             <div className="space-y-4 pt-2">
               <Input placeholder="访谈主题" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} className="rounded-xl" />
               <Input placeholder="受访者姓名/角色" value={form.interviewee} onChange={e => setForm(p => ({ ...p, interviewee: e.target.value }))} className="rounded-xl" />
               <Input type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} className="rounded-xl" />
-              <Textarea placeholder="访谈内容记录..." value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} className="rounded-xl min-h-40 resize-none" />
+              <Textarea placeholder="访谈内容记录..." value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} className="rounded-xl min-h-40 max-h-60 overflow-y-auto resize-none [field-sizing:fixed]" />
               <Button className="w-full rounded-xl" onClick={() => create.mutate({ title: form.title, interviewee: form.interviewee, content: form.content, date: form.date || undefined })} disabled={create.isPending}>
                 {create.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}创建访谈
               </Button>
             </div>
           </DialogContent>
         </Dialog>
+        </div>
         <Dialog open={editOpen} onOpenChange={setEditOpen}>
           <DialogContent className="rounded-2xl max-w-lg">
             <DialogHeader>
@@ -125,7 +136,7 @@ export default function Interviews() {
                 placeholder="访谈内容记录..."
                 value={editForm.content}
                 onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))}
-                className="rounded-xl min-h-40 resize-none"
+                className="rounded-xl min-h-40 max-h-60 overflow-y-auto resize-none [field-sizing:fixed]"
               />
               <Button
                 className="w-full rounded-xl"

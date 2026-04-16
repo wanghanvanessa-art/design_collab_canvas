@@ -5,6 +5,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
 import { transcribeAudio } from "./_core/voiceTranscription";
+import { demoStore } from "./_core/inMemoryStore";
 import { getDb } from "./db";
 import {
   meetings, todos, ideas, ideaComments, ideaVersions, ideaReactions, interviews,
@@ -284,13 +285,13 @@ const todosRouter = router({
 const ideasRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.listIdeas(ctx.user.id);
     return db.select().from(ideas).where(eq(ideas.userId, ctx.user.id)).orderBy(desc(ideas.createdAt));
   }),
 
   get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return null;
+    if (!db) return demoStore.getIdea(ctx.user.id, input.id);
     const [idea] = await db.select().from(ideas).where(and(eq(ideas.id, input.id), eq(ideas.userId, ctx.user.id)));
     return idea || null;
   }),
@@ -301,7 +302,7 @@ const ideasRouter = router({
     tags: z.array(z.string()).optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.createIdea(ctx.user.id, { title: input.title, content: input.content, tags: input.tags });
     await db.insert(ideas).values({
       userId: ctx.user.id,
       title: input.title,
@@ -314,7 +315,7 @@ const ideasRouter = router({
 
   comments: protectedProcedure.input(z.object({ ideaId: z.number() })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.listIdeaComments(input.ideaId);
     return db.select().from(ideaComments).where(eq(ideaComments.ideaId, input.ideaId)).orderBy(desc(ideaComments.createdAt));
   }),
 
@@ -323,7 +324,7 @@ const ideasRouter = router({
     content: z.string().min(1),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.addIdeaComment(ctx.user.id, { ideaId: input.ideaId, content: input.content });
     await db.insert(ideaComments).values({
       ideaId: input.ideaId,
       userId: ctx.user.id,
@@ -347,7 +348,7 @@ const ideasRouter = router({
     changeNote: z.string().optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.updateIdea(ctx.user.id, { id: input.id, title: input.title, content: input.content, status: input.status, tags: input.tags, changeNote: input.changeNote });
     const [idea] = await db.select().from(ideas).where(and(eq(ideas.id, input.id), eq(ideas.userId, ctx.user.id)));
     if (!idea) throw new Error("Not found");
 
@@ -380,7 +381,7 @@ const ideasRouter = router({
 
   rollbackVersion: protectedProcedure.input(z.object({ ideaId: z.number(), versionId: z.number() })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return { success: true };
     const [ver] = await db.select().from(ideaVersions).where(eq(ideaVersions.id, input.versionId));
     if (!ver) throw new Error("Version not found");
     await db.update(ideas).set({ title: ver.title, content: ver.content }).where(and(eq(ideas.id, input.ideaId), eq(ideas.userId, ctx.user.id)));
@@ -405,7 +406,7 @@ const ideasRouter = router({
     type: z.enum(["useful", "discuss", "question"]),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return { action: "added" };
     // Toggle: remove if same type already exists
     const existing = await db.select().from(ideaReactions).where(and(eq(ideaReactions.ideaId, input.ideaId), eq(ideaReactions.userId, ctx.user.id)));
     if (existing.length > 0) {
@@ -426,8 +427,9 @@ const ideasRouter = router({
     format: z.enum(["pdf", "word", "blog", "video_script"]),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
-    const [idea] = await db.select().from(ideas).where(eq(ideas.id, input.id));
+    const idea = db
+      ? (await db.select().from(ideas).where(eq(ideas.id, input.id)))[0]
+      : demoStore.getIdea(ctx.user.id, input.id);
     if (!idea) throw new Error("Idea not found");
 
     const systemPrompts: Record<string, string> = {
@@ -457,17 +459,20 @@ const ideasRouter = router({
     format: z.enum(["pdf", "word", "blog", "markdown"]),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
-    const [idea] = await db.select().from(ideas).where(eq(ideas.id, input.id));
+    const idea = db
+      ? (await db.select().from(ideas).where(eq(ideas.id, input.id)))[0]
+      : demoStore.getIdea(ctx.user.id, input.id);
     if (!idea) throw new Error("Idea not found");
 
-    const comments = await db.select().from(ideaComments).where(eq(ideaComments.ideaId, input.id));
+    const commentsData = db
+      ? await db.select().from(ideaComments).where(eq(ideaComments.ideaId, input.id))
+      : demoStore.listIdeaComments(input.id);
 
     let content = "";
     if (input.format === "markdown" || input.format === "blog") {
-      content = `# ${idea.title}\n\n${idea.content}\n\n---\n\n## 评论 (${comments.length})\n\n${comments.map(c => `> ${c.content}`).join("\n\n")}`;
+      content = `# ${idea.title}\n\n${idea.content}\n\n---\n\n## 评论 (${commentsData.length})\n\n${commentsData.map(c => `> ${c.content}`).join("\n\n")}`;
     } else {
-      content = `${idea.title}\n\n${idea.content}\n\n评论 (${comments.length}):\n${comments.map(c => `- ${c.content}`).join("\n")}`;
+      content = `${idea.title}\n\n${idea.content}\n\n评论 (${commentsData.length}):\n${commentsData.map(c => `- ${c.content}`).join("\n")}`;
     }
 
     return { title: idea.title, content, format: input.format === "word" ? "docx" : input.format };
@@ -478,13 +483,13 @@ const ideasRouter = router({
 const interviewsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.listInterviews(ctx.user.id);
     return db.select().from(interviews).where(eq(interviews.userId, ctx.user.id)).orderBy(desc(interviews.createdAt));
   }),
 
   get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return null;
+    if (!db) return demoStore.getInterview(ctx.user.id, input.id);
     const [iv] = await db.select().from(interviews).where(and(eq(interviews.id, input.id), eq(interviews.userId, ctx.user.id)));
     return iv || null;
   }),
@@ -496,7 +501,14 @@ const interviewsRouter = router({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) {
+      return demoStore.createInterview(ctx.user.id, {
+        title: input.title,
+        interviewee: input.interviewee,
+        content: input.content,
+        date: input.date,
+      });
+    }
     await db.insert(interviews).values({
       userId: ctx.user.id,
       title: input.title,
@@ -510,7 +522,7 @@ const interviewsRouter = router({
 
   analyze: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.analyzeInterview(ctx.user.id, input.id);
     const [iv] = await db.select().from(interviews).where(and(eq(interviews.id, input.id), eq(interviews.userId, ctx.user.id)));
     if (!iv) throw new Error("Not found");
 
@@ -560,6 +572,37 @@ const interviewsRouter = router({
 
     return { success: true };
   }),
+
+  update: protectedProcedure.input(z.object({
+    id: z.number(),
+    title: z.string().min(1),
+    interviewee: z.string().optional(),
+    content: z.string().optional(),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return demoStore.updateInterview(ctx.user.id, input);
+    const [iv] = await db.select().from(interviews).where(and(eq(interviews.id, input.id), eq(interviews.userId, ctx.user.id)));
+    if (!iv) throw new Error("Not found");
+    await db.update(interviews).set({
+      title: input.title,
+      interviewee: input.interviewee || null,
+      content: input.content || null,
+      date: input.date || null,
+      audienceLabels: [],
+      painPoints: [],
+      designSolutions: [],
+      status: "draft",
+    }).where(eq(interviews.id, input.id));
+    return { success: true };
+  }),
+
+  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return demoStore.deleteInterview(ctx.user.id, input.id);
+    await db.delete(interviews).where(and(eq(interviews.id, input.id), eq(interviews.userId, ctx.user.id)));
+    return { success: true };
+  }),
 });
 
 // ─── Knowledge Router ─────────────────────────────────────────────────────────
@@ -582,14 +625,14 @@ const knowledgeRouter = router({
 
   get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return null;
+    if (!db) return demoStore.getKnowledgeArticle(ctx.user.id, input.id);
     const [article] = await db.select().from(knowledgeArticles).where(eq(knowledgeArticles.id, input.id));
     return article || null;
   }),
 
   versions: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.versionsKnowledge(ctx.user.id, input.id);
     const [article] = await db.select().from(knowledgeArticles).where(eq(knowledgeArticles.id, input.id));
     if (!article) return [];
     const rootId = article.parentId || article.id;
@@ -606,7 +649,14 @@ const knowledgeRouter = router({
     category: z.string().optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) {
+      return demoStore.createKnowledge(ctx.user.id, {
+        title: input.title,
+        content: input.content,
+        tags: input.tags,
+        category: input.category,
+      });
+    }
     await db.insert(knowledgeArticles).values({
       userId: ctx.user.id,
       title: input.title,
@@ -623,7 +673,7 @@ const knowledgeRouter = router({
     content: z.string().min(1),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.updateKnowledge(ctx.user.id, { id: input.id, content: input.content });
     const [article] = await db.select().from(knowledgeArticles).where(eq(knowledgeArticles.id, input.id));
     if (!article) throw new Error("Not found");
 
@@ -691,7 +741,7 @@ const knowledgeRouter = router({
   // 记录浏览
   recordView: protectedProcedure.input(z.object({ articleId: z.number() })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return;
+    if (!db) { demoStore.recordKnowledgeView(ctx.user.id, input.articleId); return { success: true }; }
     // 避免重复记录（同一用户同一文章当天只记录一次）
     const existing = await db.select().from(knowledgeViews)
       .where(and(eq(knowledgeViews.articleId, input.articleId), eq(knowledgeViews.userId, ctx.user.id)));
@@ -704,7 +754,7 @@ const knowledgeRouter = router({
   // 收藏/取消收藏
   toggleFavorite: protectedProcedure.input(z.object({ articleId: z.number() })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.toggleKnowledgeFavorite(ctx.user.id, input.articleId);
     const existing = await db.select().from(knowledgeFavorites)
       .where(and(eq(knowledgeFavorites.articleId, input.articleId), eq(knowledgeFavorites.userId, ctx.user.id)));
     if (existing.length > 0) {
@@ -719,7 +769,7 @@ const knowledgeRouter = router({
   // 评论列表
   listComments: protectedProcedure.input(z.object({ articleId: z.number() })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.listKnowledgeComments(input.articleId);
     return db.select().from(knowledgeComments).where(eq(knowledgeComments.articleId, input.articleId)).orderBy(desc(knowledgeComments.createdAt));
   }),
 
@@ -731,7 +781,10 @@ const knowledgeRouter = router({
     emoji: z.string().optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) {
+      demoStore.addKnowledgeComment({ userId: ctx.user.id, userName: ctx.user.name || undefined, articleId: input.articleId, content: input.content, parentId: input.parentId, emoji: input.emoji });
+      return { success: true };
+    }
     await db.insert(knowledgeComments).values({
       articleId: input.articleId,
       userId: ctx.user.id,
@@ -804,7 +857,20 @@ const knowledgeRouter = router({
     viewMode: z.enum(['list', 'grid']).default('list'),
   })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return { articles: [], total: 0 };
+    if (!db) {
+      demoStore.ensureDevKnowledgeSeed(ctx.user.id);
+      return demoStore.advancedSearchKnowledge({
+        ctxUserId: ctx.user.id,
+        query: input.query,
+        tags: input.tags,
+        author: input.author,
+        category: input.category,
+        dateFrom: input.dateFrom,
+        dateTo: input.dateTo,
+        searchIn: input.searchIn,
+        sortBy: input.sortBy,
+      });
+    }
 
     // Search in comments mode
     if (input.searchIn === 'comments' && input.query) {
@@ -903,7 +969,7 @@ const knowledgeRouter = router({
     limit: z.number().default(4),
   })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.relatedArticlesKnowledge({ articleId: input.articleId, limit: input.limit });
     const [article] = await db.select().from(knowledgeArticles).where(eq(knowledgeArticles.id, input.articleId));
     if (!article) return [];
     const articleTags = article.tags as string[] || [];
@@ -965,7 +1031,7 @@ const knowledgeRouter = router({
 const inspirationRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.listInspirationItems(ctx.user.id);
     return db.select().from(inspirationItems).where(eq(inspirationItems.userId, ctx.user.id)).orderBy(desc(inspirationItems.createdAt));
   }),
 
@@ -979,7 +1045,15 @@ const inspirationRouter = router({
     posY: z.number().default(0),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.createInspirationItem(ctx.user.id, {
+      type: input.type,
+      title: input.title,
+      content: input.content,
+      url: input.url,
+      color: input.color,
+      posX: input.posX,
+      posY: input.posY,
+    });
     await db.insert(inspirationItems).values({
       userId: ctx.user.id,
       type: input.type,
@@ -1003,7 +1077,7 @@ const inspirationRouter = router({
     height: z.number().optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.updateInspirationPosition(ctx.user.id, input);
     const updateData: Record<string, number> = { posX: input.posX, posY: input.posY };
     if (input.width !== undefined) updateData.width = input.width;
     if (input.height !== undefined) updateData.height = input.height;
@@ -1013,8 +1087,22 @@ const inspirationRouter = router({
 
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.deleteInspirationItem(ctx.user.id, input.id);
     await db.delete(inspirationItems).where(and(eq(inspirationItems.id, input.id), eq(inspirationItems.userId, ctx.user.id)));
+    return { success: true };
+  }),
+
+  updateContent: protectedProcedure.input(z.object({
+    id: z.number(),
+    title: z.string().optional(),
+    content: z.string().optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return demoStore.updateInspirationContent(ctx.user.id, input);
+    const updateData: Record<string, string | null> = {};
+    if (input.title !== undefined) updateData.title = input.title.trim() || null;
+    if (input.content !== undefined) updateData.content = input.content.trim() || null;
+    await db.update(inspirationItems).set(updateData).where(and(eq(inspirationItems.id, input.id), eq(inspirationItems.userId, ctx.user.id)));
     return { success: true };
   }),
 
@@ -1024,7 +1112,7 @@ const inspirationRouter = router({
     attachmentUrls: z.array(z.string()).optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) throw new Error("AI 功能需要数据库连接");
 
     // Get the target card
     const [card] = await db.select().from(inspirationItems).where(
@@ -1102,7 +1190,7 @@ const inspirationRouter = router({
 
   generateTags: protectedProcedure.input(z.object({})).mutation(async ({ ctx }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return { success: true };
     const items = await db.select().from(inspirationItems).where(eq(inspirationItems.userId, ctx.user.id));
     if (items.length === 0) return { success: true };
 
@@ -1158,20 +1246,20 @@ const inspirationRouter = router({
 const reviewsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.listDesignReviews(ctx.user.id);
     return db.select().from(designReviews).where(and(eq(designReviews.userId, ctx.user.id), isNull(designReviews.parentId))).orderBy(desc(designReviews.createdAt));
   }),
 
   get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return null;
+    if (!db) return demoStore.getDesignReview(ctx.user.id, input.id);
     const [review] = await db.select().from(designReviews).where(eq(designReviews.id, input.id));
     return review || null;
   }),
 
   versions: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.versionsDesignReview(ctx.user.id, input.id);
     const [review] = await db.select().from(designReviews).where(eq(designReviews.id, input.id));
     if (!review) return [];
     const rootId = review.parentId || review.id;
@@ -1183,15 +1271,177 @@ const reviewsRouter = router({
 
   upload: protectedProcedure.input(z.object({
     title: z.string().min(1),
-    designUrl: z.string().url(),
+    designUrls: z.array(z.string().min(1).refine(
+      (value) => /^https?:\/\//i.test(value) || /^data:image\//i.test(value),
+      "designUrl must be an http(s) or data:image URL",
+    )).min(1).max(10),
+    mode: z.enum(["single", "compare"]).default("single"),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+
+    const isSingle = input.mode === "single";
+    const imageCount = input.designUrls.length;
+
+    const designReviewSystemPrompt = isSingle
+      ? `你是一位资深 UI/UX 设计评审专家，拥有 10 年以上 B 端企业级 SaaS/中台产品设计经验。你的职责是**仔细观察用户上传的设计稿图片**，从「产品功能」「交互体验」「设计样式」三个维度进行专业深度分析，并给出综合总览。
+
+【综合总览】
+- 一句话概括设计稿的整体评价（不超过 30 字）
+- 总体评分（overallScore, 0-100）
+- 核心亮点（不少于 2 条，必须引用设计稿中的具体视觉元素）
+- 主要问题（不少于 2 条，必须指出设计稿中的具体位置或元素）
+
+【产品功能维度】(productScore, 0-100)
+- 业务目标达成度：核心业务流程是否完整闭环
+- 功能完整性：关键功能点覆盖率、边界 case 处理
+- 信息架构：内容组织逻辑、导航结构、标签命名清晰度
+- 数据展示：数据可视化的准确性和有效性
+
+【交互体验维度】(interactionScore, 0-100)
+- 操作流程：核心任务路径的步骤合理性
+- 控件选择：表单控件、操作按钮的类型是否恰当
+- 反馈机制：操作结果反馈、加载状态、空状态处理
+- 可用性：学习成本、容错设计、操作效率
+
+【设计样式维度】(designScore, 0-100)
+- 布局结构：栅格系统使用、间距一致性、对齐规范
+- 色彩体系：主题色、功能色、中性色搭配合理性
+- 字体排版：字号层级、行高间距、阅读舒适度
+- 视觉一致性：组件风格统一性、设计规范遵循度
+
+评审要求：
+1. **必须具体描述你在设计稿中看到的视觉元素**（按钮位置、颜色值、布局方式、文字内容等），不要泛泛而谈
+2. 每个维度给出 0-100 的量化评分和不少于 80 字的详细评审意见
+3. 综合评分 = 三维度加权平均（产品功能 35%、交互体验 35%、设计样式 30%）
+4. 优化建议必须可操作、可量化，每条包含「问题描述 → 改进方向 → 预期收益」三段式
+
+负面清单：
+- 禁止使用"还不错""整体良好"等模糊评价
+- 禁止给出无法落地的建议
+- 禁止忽略设计稿图片中的实际内容
+- 禁止编造设计稿中不存在的元素
+
+请严格以如下 JSON 格式回复，不要输出任何多余文字：
+{"overview":"综合总览文字","highlights":["亮点1","亮点2"],"issues":["问题1","问题2"],"productScore":85,"interactionScore":80,"designScore":82,"overallScore":82,"reviewComments":[{"dimension":"产品功能","score":85,"comment":"详细评审意见"},{"dimension":"交互体验","score":80,"comment":"详细评审意见"},{"dimension":"设计样式","score":82,"comment":"详细评审意见"}],"suggestions":["建议1","建议2"]}`
+      : `你是一位资深 UI/UX 设计评审专家，拥有 10 年以上 B 端企业级 SaaS/中台产品设计经验。你的职责是**对用户上传的多张设计稿进行竞品对比分析**，从「产品功能」「交互体验」「设计样式」三个维度进行横向对比，并给出综合对比总结。
+
+用户上传了 ${imageCount} 张设计稿，请按顺序编号为"方案 A、方案 B、方案 C…"。
+
+【综合对比总结】
+- 一句话概括哪个方案综合最优及原因（不超过 50 字）
+- 各方案总体评分（overallScore, 0-100）
+- 红榜（每个方案的最大亮点，必须引用具体视觉元素）
+- 黑榜（每个方案的最大问题，必须指出具体位置或元素）
+
+【产品功能对比】(productScore, 0-100)
+- 逐方案对比：业务流程完整性、功能覆盖率、信息架构优劣
+- 给出各方案的排名和分数
+
+【交互体验对比】(interactionScore, 0-100)
+- 逐方案对比：操作路径长度、控件选择合理性、反馈机制完善度
+- 给出各方案的排名和分数
+
+【设计样式对比】(designScore, 0-100)
+- 逐方案对比：布局规范性、色彩搭配、字体排版、视觉一致性
+- 给出各方案的排名和分数
+
+对比要求：
+1. **必须具体描述每张设计稿中的视觉元素差异**，不要泛泛而谈
+2. 每个维度给出各方案 0-100 的量化评分和详细对比分析
+3. 综合评分 = 三维度加权平均（产品功能 35%、交互体验 35%、设计样式 30%）
+4. 对比结论必须有明确的推荐排名
+5. 优化建议针对各方案分别给出「问题 → 改进 → 收益」三段式
+
+请严格以如下 JSON 格式回复，不要输出任何多余文字：
+{"overview":"对比总结","highlights":["方案A亮点","方案B亮点"],"issues":["方案A问题","方案B问题"],"productScore":85,"interactionScore":80,"designScore":82,"overallScore":82,"reviewComments":[{"dimension":"产品功能对比","score":85,"comment":"详细对比分析"},{"dimension":"交互体验对比","score":80,"comment":"详细对比分析"},{"dimension":"设计样式对比","score":82,"comment":"详细对比分析"}],"suggestions":["方案A建议","方案B建议"]}`;
+
+    const buildDesignReviewUserContent = (title: string, designUrls: string[], mode: "single" | "compare"): import("./_core/llm").MessageContent[] => {
+      const parts: import("./_core/llm").MessageContent[] = [];
+      if (mode === "single") {
+        parts.push({ type: "text" as const, text: `设计方案标题：${title}\n\n请仔细观察上传的设计稿图片，从「产品功能」「交互体验」「设计样式」三个维度进行深度分析，并给出综合总览。\n\n评审维度：\n1. 产品功能(productScore, 0-100)\n2. 交互体验(interactionScore, 0-100)\n3. 设计样式(designScore, 0-100)\n\n请给出各维度的详细评审意见(reviewComments)、综合总览(overview)、优化建议(suggestions)和综合评分(overallScore)。` });
+        for (const url of designUrls) {
+          parts.push({ type: "image_url" as const, image_url: { url, detail: "high" as const } });
+        }
+      } else {
+        parts.push({ type: "text" as const, text: `对比分析标题：${title}\n\n以下是 ${designUrls.length} 张待对比的设计稿，请按顺序编号为"方案 A、方案 B、方案 C…"，从「产品功能」「交互体验」「设计样式」三个维度进行横向竞品对比分析。\n\n对比维度：\n1. 产品功能(productScore, 0-100)\n2. 交互体验(interactionScore, 0-100)\n3. 设计样式(designScore, 0-100)\n\n请给出各方案各维度的详细对比分析(reviewComments)、综合对比总结(overview)、各方案优化建议(suggestions)和各方案综合评分(overallScore)。` });
+        for (const url of designUrls) {
+          parts.push({ type: "image_url" as const, image_url: { url, detail: "high" as const } });
+        }
+      }
+      return parts;
+    };
+
+    // NOTE: Many vision models (qwen-vl, glm-4v, etc.) do NOT support response_format.
+    // We rely on the system prompt to enforce JSON output instead.
+    const designReviewResponseFormat: import("./_core/llm").ResponseFormat | undefined = undefined;
+
+    const primaryDesignUrl = input.designUrls[0];
+
+    if (!db) {
+      const { id } = demoStore.uploadDesignReview(ctx.user.id, {
+        title: input.title,
+        designUrl: primaryDesignUrl,
+        designUrls: input.designUrls,
+        mode: input.mode,
+      });
+      invokeLLM({
+        messages: [
+          { role: "system", content: designReviewSystemPrompt },
+          { role: "user", content: buildDesignReviewUserContent(input.title, input.designUrls, input.mode) },
+        ],
+        ...(designReviewResponseFormat ? { response_format: designReviewResponseFormat } : {}),
+      }).then((llmRes) => {
+        const rawContent = llmRes.choices[0]?.message?.content || "{}";
+        let jsonStr = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent);
+        // Strip thinking blocks and markdown code fences
+        jsonStr = jsonStr
+          .replace(/<think>[\s\S]*?<\/think>/gi, "")
+          .replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1")
+          .trim();
+        // Try to extract JSON object from text (model may add surrounding text)
+        const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+        if (jsonMatch) jsonStr = jsonMatch[0];
+        let parsed: any;
+        try {
+          parsed = JSON.parse(jsonStr || "{}");
+        } catch {
+          console.error("[reviews.upload] JSON parse failed, raw:", jsonStr.slice(0, 500));
+          throw new Error("AI 返回的内容无法解析为 JSON，请尝试更换模型或重新评审");
+        }
+        demoStore.applyDesignReviewResult(ctx.user.id, id, {
+          productScore: parsed.productScore ?? 70,
+          interactionScore: parsed.interactionScore ?? 70,
+          designScore: parsed.designScore ?? 70,
+          overallScore: parsed.overallScore ?? 70,
+          overview: parsed.overview || "",
+          highlights: parsed.highlights || [],
+          issues: parsed.issues || [],
+          reviewComments: parsed.reviewComments || [],
+          suggestions: parsed.suggestions || [],
+          status: "done",
+        });
+      }).catch((err: unknown) => {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        demoStore.applyDesignReviewResult(ctx.user.id, id, {
+          productScore: 0,
+          interactionScore: 0,
+          designScore: 0,
+          overallScore: 0,
+          overview: `AI 分析失败：${errMsg}。请检查 API 配置是否正确。`,
+          highlights: [],
+          issues: ["API 调用失败，请前往设置配置正确的模型 API Key"],
+          reviewComments: [],
+          suggestions: ["请点击右上角「配置 AI 模型」按钮，填写有效的 API Key 后重新发起评审"],
+          status: "error",
+        });
+      });
+      return { id };
+    }
 
     const [result] = await db.insert(designReviews).values({
       userId: ctx.user.id,
       title: input.title,
-      designUrl: input.designUrl,
+      designUrl: primaryDesignUrl,
       status: "reviewing",
       version: 1,
     });
@@ -1204,62 +1454,59 @@ const reviewsRouter = router({
         if (!db2) return;
         const llmRes = await invokeLLM({
           messages: [
-            { role: "system", content: "你是一个专业的B端产品设计评审专家。请从多个维度评审设计方案，给出专业评分和改进建议。请用JSON格式回复。" },
-            { role: "user", content: `设计方案标题：${input.title}\n设计稿URL：${input.designUrl}\n\n请从以下维度进行评审：\n1. B端业务逻辑合理性(businessLogicScore, 0-100)\n2. 交互一致性(interactionScore, 0-100)\n3. 无障碍性Accessibility(accessibilityScore, 0-100)\n\n并提供：\n- 每个维度的详细评审意见(reviewComments)\n- 综合优化建议列表(suggestions)\n- 综合评分(overallScore, 0-100)` },
+            { role: "system", content: designReviewSystemPrompt },
+            { role: "user", content: buildDesignReviewUserContent(input.title, input.designUrls, input.mode) },
           ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "design_review",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  businessLogicScore: { type: "number" },
-                  interactionScore: { type: "number" },
-                  accessibilityScore: { type: "number" },
-                  overallScore: { type: "number" },
-                  reviewComments: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        dimension: { type: "string" },
-                        score: { type: "number" },
-                        comment: { type: "string" },
-                      },
-                      required: ["dimension", "score", "comment"],
-                      additionalProperties: false,
-                    },
-                  },
-                  suggestions: { type: "array", items: { type: "string" } },
-                },
-                required: ["businessLogicScore", "interactionScore", "accessibilityScore", "overallScore", "reviewComments", "suggestions"],
-                additionalProperties: false,
-              },
-            },
-          },
+          ...(designReviewResponseFormat ? { response_format: designReviewResponseFormat } : {}),
         });
 
-        const content = llmRes.choices[0]?.message?.content || "{}";
-        const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
+        const rawContent = llmRes.choices[0]?.message?.content || "{}";
+        const rawStr = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent);
+        // Strip <think> blocks and markdown code fences
+        let cleaned = rawStr
+          .replace(/<think>[\s\S]*?<\/think>/gi, "")
+          .replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1")
+          .trim();
+        // Try to extract JSON object from text
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+        if (jsonMatch) cleaned = jsonMatch[0];
+        let parsed: any;
+        try {
+          parsed = JSON.parse(cleaned || "{}");
+        } catch {
+          console.error("[reviews.upload] JSON parse failed, raw:", cleaned.slice(0, 500));
+          throw new Error("AI 返回的内容无法解析为 JSON");
+        }
 
         await db2.update(designReviews).set({
-          businessLogicScore: parsed.businessLogicScore,
-          interactionScore: parsed.interactionScore,
-          accessibilityScore: parsed.accessibilityScore,
-          overallScore: parsed.overallScore,
+          businessLogicScore: parsed.productScore ?? null,
+          interactionScore: parsed.interactionScore ?? null,
+          accessibilityScore: parsed.designScore ?? null,
+          overallScore: parsed.overallScore ?? null,
           reviewComments: parsed.reviewComments || [],
           suggestions: parsed.suggestions || [],
           status: "done",
         }).where(eq(designReviews.id, reviewId));
-      } catch {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         const db3 = await getDb();
-        if (db3) await db3.update(designReviews).set({ status: "error" }).where(eq(designReviews.id, reviewId));
+        if (db3) await db3.update(designReviews).set({
+          status: "error",
+          suggestions: [`AI 分析失败：${errMsg}。请检查模型是否支持图片分析（视觉模型）。`],
+          reviewComments: [],
+        }).where(eq(designReviews.id, reviewId));
+        console.error("[reviews.upload] AI review failed:", errMsg);
       }
     })();
 
     return { id: reviewId };
+  }),
+
+  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return demoStore.deleteDesignReview(ctx.user.id, input.id);
+    await db.delete(designReviews).where(and(eq(designReviews.id, input.id), eq(designReviews.userId, ctx.user.id)));
+    return { success: true };
   }),
 });
 
@@ -1285,7 +1532,14 @@ const blindboxRouter = router({
     category: z.string().optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) {
+      return demoStore.createKnowledge(ctx.user.id, {
+        title: input.title,
+        content: input.content,
+        tags: input.tags,
+        category: input.category || "灵感盲盒",
+      });
+    }
     await db.insert(knowledgeArticles).values({
       userId: ctx.user.id,
       title: input.title,

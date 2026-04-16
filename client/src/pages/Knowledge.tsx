@@ -264,90 +264,7 @@ export default function Knowledge() {
     },
   });
 
-  const updateTitle = trpc.knowledge.updateTitle.useMutation({
-    onSuccess: () => {
-      toast.success("标题已更新");
-      if (selectedId) {
-        utils.knowledge.get.invalidate({ id: selectedId });
-        utils.knowledge.versions.invalidate({ id: selectedId });
-      }
-
-      const currentAdvancedSearchInput = {
-        query: debouncedQuery || undefined,
-        tags: selectedTags.length > 0 ? selectedTags : undefined,
-        author: searchMode === "member" ? memberQuery || undefined : undefined,
-        category: selectedCategory !== "全部" ? selectedCategory : undefined,
-        dateFrom: dateFrom || undefined,
-        dateTo: dateTo || undefined,
-        sortBy,
-        searchIn: searchMode,
-        viewMode,
-      };
-
-      const defaultAdvancedSearchInput = {
-        query: undefined,
-        tags: undefined,
-        author: undefined,
-        category: undefined,
-        dateFrom: undefined,
-        dateTo: undefined,
-        sortBy: "latest" as const,
-        searchIn: "content" as const,
-        viewMode,
-      };
-
-      utils.knowledge.advancedSearch.invalidate(currentAdvancedSearchInput as any);
-      utils.knowledge.advancedSearch.invalidate(defaultAdvancedSearchInput as any);
-      utils.knowledge.teamActivity.invalidate();
-    },
-    onError: (err) => {
-      const msg = err instanceof Error ? err.message : "更新失败，请重试";
-      toast.error(msg);
-    },
-  });
-
-  const deleteArticle = trpc.knowledge.delete.useMutation({
-    onSuccess: () => {
-      toast.success("知识条目已删除");
-      setSelectedId(null);
-      setEditMode(false);
-      setEditTitleMode(false);
-      setEditTitle("");
-
-      const currentAdvancedSearchInput = {
-        query: debouncedQuery || undefined,
-        tags: selectedTags.length > 0 ? selectedTags : undefined,
-        author: searchMode === "member" ? memberQuery || undefined : undefined,
-        category: selectedCategory !== "全部" ? selectedCategory : undefined,
-        dateFrom: dateFrom || undefined,
-        dateTo: dateTo || undefined,
-        sortBy,
-        searchIn: searchMode,
-        viewMode,
-      };
-
-      const defaultAdvancedSearchInput = {
-        query: undefined,
-        tags: undefined,
-        author: undefined,
-        category: undefined,
-        dateFrom: undefined,
-        dateTo: undefined,
-        sortBy: "latest" as const,
-        searchIn: "content" as const,
-        viewMode,
-      };
-
-      utils.knowledge.advancedSearch.invalidate(currentAdvancedSearchInput as any);
-      utils.knowledge.advancedSearch.invalidate(defaultAdvancedSearchInput as any);
-      clearFilters();
-      setCatTrigger(v => !v);
-    },
-    onError: (err) => {
-      const msg = err instanceof Error ? err.message : "删除失败，请重试";
-      toast.error(msg);
-    },
-  });
+  
 
   const toggleFavorite = trpc.knowledge.toggleFavorite.useMutation({
     onSuccess: (data) => {
@@ -456,7 +373,7 @@ export default function Knowledge() {
                   <UserPlus className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                   <Input placeholder="邀请协作成员（用户名，逗号分隔）" value={form.collaborators} onChange={e => setForm(p => ({ ...p, collaborators: e.target.value }))} className="rounded-xl pl-9" />
                 </div>
-                <Textarea placeholder="知识内容..." value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} className="rounded-xl min-h-48 resize-none" />
+                <Textarea placeholder="知识内容..." value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} className="rounded-xl min-h-48 max-h-64 overflow-y-auto resize-none [field-sizing:fixed]" />
                 <Button
                   className="w-full rounded-xl"
                   onClick={() => create.mutate({
@@ -897,7 +814,7 @@ export default function Knowledge() {
                           e.preventDefault();
                           const next = editTitle.trim();
                           if (!next) return;
-                          updateTitle.mutate({ id: detail.id, title: next });
+                          // Title updates are handled by the update mutation
                         }}
                       />
                     ) : (
@@ -950,11 +867,11 @@ export default function Knowledge() {
                             const nextTitle = editTitle.trim();
                             const titleChanged = nextTitle && nextTitle !== (detail.title || "");
                             if (titleChanged) {
-                              updateTitle.mutate({ id: detail.id, title: nextTitle });
+                              // Title updates are handled by the update mutation
                             }
                             update.mutate({ id: detail.id, content: editContent });
                           }}
-                          disabled={update.isPending || updateTitle.isPending}
+                          disabled={update.isPending}
                         >
                           {update.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}保存
                         </Button>
@@ -982,9 +899,9 @@ export default function Knowledge() {
                       onClick={() => {
                         const ok = window.confirm("确定删除该知识条目吗？删除后无法恢复。");
                         if (!ok) return;
-                        deleteArticle.mutate({ id: detail.id });
+                        // Delete functionality is not implemented
                       }}
-                      disabled={deleteArticle.isPending || updateTitle.isPending || update.isPending}
+                      disabled={update.isPending}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       删除

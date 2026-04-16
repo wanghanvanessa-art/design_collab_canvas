@@ -635,12 +635,6 @@ export default function Inspiration() {
             <div className="flex items-center justify-center h-full">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
             </div>
-          ) : items?.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <Sparkles className="w-12 h-12 mb-3 opacity-20" />
-              <p className="text-sm font-medium">画布是空的</p>
-              <p className="text-xs mt-1">点击「添加灵感」开始创作</p>
-            </div>
           ) : (
             <div
               ref={canvasRef}
@@ -650,7 +644,7 @@ export default function Inspiration() {
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
             >
-              {/* Drawing layer：外层必须 pointer-events-none，否则全屏 z-10 会挡住下方便利贴；仅 canvas 在绘制模式下接事件 */}
+              {/* Drawing layer：始终渲染，外层 pointer-events-none 不挡便利贴；仅 canvas 在绘制模式下接事件 */}
               <div ref={drawLayerWrapRef} className="absolute inset-0 z-10 pointer-events-none">
                 <canvas
                   ref={drawLayerRef}
@@ -662,6 +656,16 @@ export default function Inspiration() {
                   onPointerCancel={handleDrawPointerUp}
                 />
               </div>
+
+              {/* 空状态提示（不阻止画布和工具层渲染） */}
+              {(!items || items.length === 0) && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground pointer-events-none z-0">
+                  <Sparkles className="w-12 h-12 mb-3 opacity-20" />
+                  <p className="text-sm font-medium">画布是空的</p>
+                  <p className="text-xs mt-1">点击「添加灵感」开始创作，或使用左侧画笔工具</p>
+                </div>
+              )}
+
               {items?.map((item) => {
                 const tags = (item.styleTags as string[]) || [];
                 const isSelected = selectedCard?.id === item.id;

@@ -51,7 +51,7 @@ export default function Ideas() {
             <DialogHeader><DialogTitle className="font-display">发布新想法</DialogTitle></DialogHeader>
             <div className="space-y-4 pt-2">
               <Input placeholder="想法标题" value={newIdea.title} onChange={e => setNewIdea(p => ({ ...p, title: e.target.value }))} className="rounded-xl" />
-              <Textarea placeholder="详细描述你的想法..." value={newIdea.content} onChange={e => setNewIdea(p => ({ ...p, content: e.target.value }))} className="rounded-xl min-h-32 resize-none" />
+              <Textarea placeholder="详细描述你的想法..." value={newIdea.content} onChange={e => setNewIdea(p => ({ ...p, content: e.target.value }))} className="rounded-xl min-h-32 max-h-60 overflow-y-auto resize-none [field-sizing:fixed]" />
               <Input placeholder="标签（用逗号分隔，如：交互设计,用户体验）" value={newIdea.tags} onChange={e => setNewIdea(p => ({ ...p, tags: e.target.value }))} className="rounded-xl" />
               <Button className="w-full rounded-xl" onClick={() => createIdea.mutate({ title: newIdea.title, content: newIdea.content, tags: newIdea.tags.split(",").map(t => t.trim()).filter(Boolean) })} disabled={createIdea.isPending}>
                 {createIdea.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}发布想法
