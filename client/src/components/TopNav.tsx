@@ -22,7 +22,7 @@ const NAV_ITEMS = [
   { href: "/ideas",       label: "想法落地页",   icon: Lightbulb, accent: "text-amber-600",  hover: "hover:text-amber-600 hover:bg-amber-50" },
   { href: "/interviews",  label: "用户访谈",     icon: Users,     accent: "text-emerald-600",hover: "hover:text-emerald-600 hover:bg-emerald-50" },
   { href: "/knowledge",   label: "设计知识库",   icon: BookOpen,  accent: "text-blue-600",   hover: "hover:text-blue-600 hover:bg-blue-50" },
-  { href: "/inspiration", label: "灵感碰撞墙",   icon: Layers,    accent: "text-pink-600",   hover: "hover:text-pink-600 hover:bg-pink-50" },
+  { href: "/inspiration", label: "灵感工坊",     icon: Layers,    accent: "text-pink-600",   hover: "hover:text-pink-600 hover:bg-pink-50" },
   { href: "/reviews",     label: "方案评审",     icon: Search,    accent: "text-indigo-600", hover: "hover:text-indigo-600 hover:bg-indigo-50" },
 ];
 
@@ -31,7 +31,7 @@ const QUICK_SUGGESTIONS = [
   { label: "发布新想法",   href: "/ideas",       icon: "💡" },
   { label: "添加访谈记录", href: "/interviews",  icon: "👥" },
   { label: "查找设计规范", href: "/knowledge",   icon: "📚" },
-  { label: "灵感碰撞墙",   href: "/inspiration", icon: "✨" },
+  { label: "灵感工坊",     href: "/inspiration", icon: "✨" },
   { label: "发起设计评审", href: "/reviews",     icon: "🔍" },
 ];
 

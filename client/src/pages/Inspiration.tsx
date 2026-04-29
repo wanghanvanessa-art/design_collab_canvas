@@ -1,404 +1,195 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import {
-  Sparkles, Plus, Loader2, Link2, Type, Image, X, Move, Tag,
-  Pencil, Eraser, Stamp, SquarePen,
+  Sparkles, Loader2, Copy, Trash2, Image, Upload, Wand2,
+  Bookmark, BookmarkCheck, GripVertical, Clock,
+  Settings2, CheckCircle, Send, MessageSquare,
 } from "lucide-react";
 import { BackButton } from "@/components/BackButton";
+import { ModelConfigDialog } from "@/components/ModelConfigDialog";
 
-const CARD_COLORS = [
-  { name: "黄色", value: "#fef9c3", border: "#fef08a" },
-  { name: "紫色", value: "#f3e8ff", border: "#e9d5ff" },
-  { name: "绿色", value: "#dcfce7", border: "#bbf7d0" },
-  { name: "粉色", value: "#fce7f3", border: "#fbcfe8" },
-  { name: "蓝色", value: "#e0f2fe", border: "#bae6fd" },
-  { name: "白色", value: "#ffffff", border: "#e5e7eb" },
-];
-
-const MIN_W = 160;
-const MIN_H = 100;
-
-/** 画笔预设 10 色（可再搭配自定义取色） */
-const PEN_PRESET_COLORS = [
-  "#111827", // 墨黑
-  "#ef4444", // 红
-  "#f97316", // 橙
-  "#eab308", // 黄
-  "#22c55e", // 绿
-  "#14b8a6", // 青
-  "#3b82f6", // 蓝
-  "#8b5cf6", // 紫
-  "#ec4899", // 粉
-  "#78716c", // 灰棕
-] as const;
-
-/** 印章 10 款（emoji） */
-const STAMP_EMOJIS = [
-  "💡", "✅", "⭐", "🔥", "❤️",
-  "👍", "🎨", "✨", "📝", "🚀",
-] as const;
+type AnalysisResult = {
+  prompt: string;
+  summaryCn: string;
+  subject: string;
+  style: string;
+  colorPalette: string;
+  composition: string;
+  lighting: string;
+  texture: string;
+  details: string;
+};
 
 type InspirationCard = {
-  id: number;
-  type: string;
-  title: string | null;
-  content: string | null;
-  imageUrl: string | null;
-  url: string | null;
-  posX: number | null;
-  posY: number | null;
-  width: number | null;
-  height: number | null;
-  styleTags: unknown;
-  color: string | null;
-  linkedTodoId: number | null;
-  linkedInterviewId: number | null;
-  createdAt: Date;
-  updatedAt: Date;
-  userId: number;
-  boardId: number | null;
+  id: string;
+  title: string;
+  category: "style" | "composition" | "mood";
+  prompt: string;
+  promptCn: string;
+  description: string;
+  saved: boolean;
 };
 
-// Resize handle corners
-type ResizeDir = "se" | "sw" | "ne" | "nw";
-
-const RESIZE_CURSORS: Record<ResizeDir, string> = {
-  se: "cursor-se-resize",
-  sw: "cursor-sw-resize",
-  ne: "cursor-ne-resize",
-  nw: "cursor-nw-resize",
+type HistoryItem = {
+  id: string;
+  timestamp: number;
+  prompt: string;
+  imagePreview?: string;
+  analysis: AnalysisResult;
+  cards: InspirationCard[];
 };
+
+const CATEGORY_MAP: Record<string, { label: string; color: string; bg: string; bgActive: string }> = {
+  style: { label: "风格", color: "text-purple-700", bg: "bg-purple-50 border-purple-200", bgActive: "bg-purple-600 text-white border-purple-600" },
+  composition: { label: "构图", color: "text-blue-700", bg: "bg-blue-50 border-blue-200", bgActive: "bg-blue-600 text-white border-blue-600" },
+  mood: { label: "氛围", color: "text-amber-700", bg: "bg-amber-50 border-amber-200", bgActive: "bg-amber-600 text-white border-amber-600" },
+};
+
+const HISTORY_KEY = "inspiration_workshop_history";
+function loadHistory(): HistoryItem[] {
+  try { const r = localStorage.getItem(HISTORY_KEY); return r ? JSON.parse(r) : []; } catch { return []; }
+}
+function saveHistory(items: HistoryItem[]) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, 50)));
+}
 
 export default function Inspiration() {
-  const [addOpen, setAddOpen] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-  const [editingCard, setEditingCard] = useState<InspirationCard | null>(null);
-  const [editForm, setEditForm] = useState({ title: "", content: "" });
-  const [selectedCard, setSelectedCard] = useState<InspirationCard | null>(null);
-  const [dragging, setDragging] = useState<number | null>(null);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageDragging, setImageDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
 
-  // Resize state
-  const [resizing, setResizing] = useState<{ id: number; dir: ResizeDir; startX: number; startY: number; startW: number; startH: number; startPosX: number; startPosY: number } | null>(null);
+  // All cards (full set); activeFilter controls which subset is shown
+  const [allCards, setAllCards] = useState<InspirationCard[]>([]);
+  const [activeFilter, setActiveFilter] = useState<"all" | "style" | "composition" | "mood">("all");
+  const [expanding, setExpanding] = useState(false);
+  const [expandMode, setExpandMode] = useState<"all" | "style" | "composition" | "mood">("all");
 
-  const [form, setForm] = useState({ type: "text" as "text" | "image" | "link", title: "", content: "", url: "", color: "#fef9c3" });
+  // Chat input
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
 
-  // ── Goodnotes-like tools (pen / stamp / eraser) ─────────────────────────────
-  type ToolMode = "select" | "pen" | "eraser" | "stamp";
-  const [tool, setTool] = useState<ToolMode>("select");
-  const [penColor, setPenColor] = useState<string>(PEN_PRESET_COLORS[0]);
-  const [penWidth, setPenWidth] = useState(3);
-  const [stamp, setStamp] = useState<string>(STAMP_EMOJIS[0]);
-  const [isDrawing, setIsDrawing] = useState(false);
+  const [history, setHistory] = useState<HistoryItem[]>(loadHistory);
+  const [showHistory, setShowHistory] = useState(false);
+  const [modelConfigOpen, setModelConfigOpen] = useState(false);
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 
-  type Stroke = { id: string; mode: "pen" | "eraser"; color: string; width: number; points: Array<{ x: number; y: number }> };
-  type StampMark = { id: string; x: number; y: number; text: string; size: number };
-  const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [stamps, setStamps] = useState<StampMark[]>([]);
-  const activeStrokeRef = useRef<Stroke | null>(null);
+  const analyzeImageMut = trpc.inspiration.analyzeImage.useMutation();
+  const expandInspirationMut = trpc.inspiration.expandInspiration.useMutation();
+  const chatExpandMut = trpc.inspiration.chatExpand.useMutation();
 
-  const drawLayerRef = useRef<HTMLCanvasElement>(null);
-  const drawLayerWrapRef = useRef<HTMLDivElement>(null);
+  // Derived: filtered cards based on activeFilter
+  const filteredCards = activeFilter === "all"
+    ? allCards
+    : allCards.filter(c => c.category === activeFilter);
 
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const utils = trpc.useUtils();
+  // Category counts
+  const catCounts = { all: allCards.length, style: 0, composition: 0, mood: 0 };
+  allCards.forEach(c => { if (c.category in catCounts) catCounts[c.category as keyof typeof catCounts]++; });
 
-  const { data: items, isLoading } = trpc.inspiration.list.useQuery();
-
-  const create = trpc.inspiration.create.useMutation({
-    onSuccess: () => {
-      toast.success("灵感卡片已添加到画布！");
-      setAddOpen(false);
-      setForm({ type: "text", title: "", content: "", url: "", color: "#fef9c3" });
-      utils.inspiration.list.invalidate();
-    },
-  });
-
-  const updatePos = trpc.inspiration.updatePosition.useMutation({
-    onSettled: () => utils.inspiration.list.invalidate(),
-  });
-
-  const deleteItem = trpc.inspiration.delete.useMutation({
-    onSuccess: () => {
-      toast.success("已删除");
-      setSelectedCard(null);
-      utils.inspiration.list.invalidate();
-    },
-  });
-
-  const updateContent = trpc.inspiration.updateContent.useMutation({
-    onSuccess: () => {
-      toast.success("便利贴已更新");
-      setEditOpen(false);
-      setEditingCard(null);
-      utils.inspiration.list.invalidate();
-    },
-  });
-
-  const openEditDialog = useCallback((item: InspirationCard) => {
-    setEditingCard(item);
-    setEditForm({
-      title: item.title ?? "",
-      content: item.content ?? "",
-    });
-    setEditOpen(true);
+  const handleFile = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) { toast.error("请上传图片文件"); return; }
+    if (file.size > 10 * 1024 * 1024) { toast.error("图片大小不能超过 10MB"); return; }
+    const reader = new FileReader();
+    reader.onload = () => { setImagePreview(reader.result as string); setAnalysis(null); setAllCards([]); setActiveFilter("all"); };
+    reader.readAsDataURL(file);
   }, []);
 
-  const handleSaveEdit = useCallback(() => {
-    if (!editingCard) return;
-    updateContent.mutate({
-      id: editingCard.id,
-      title: editForm.title,
-      content: editForm.content,
-    });
-  }, [editForm.content, editForm.title, editingCard, updateContent]);
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); setImageDragging(false);
+    const file = e.dataTransfer.files[0]; if (file) handleFile(file);
+  }, [handleFile]);
 
-  // ── Drag handlers（仅「选择」模式下可拖拽便利贴）────────────────────────────────
-  const handleMouseDown = useCallback((e: React.MouseEvent, id: number, posX: number, posY: number) => {
-    if (tool !== "select") return;
-    e.preventDefault();
-    e.stopPropagation();
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setDragging(id);
-    setDragOffset({ x: e.clientX - rect.left - posX, y: e.clientY - rect.top - posY });
-  }, [tool]);
+  const handleAnalyze = useCallback(async () => {
+    if (!imagePreview) return;
+    setAnalyzing(true);
+    try {
+      const result = await analyzeImageMut.mutateAsync({ imageBase64: imagePreview });
+      setAnalysis(result as AnalysisResult);
+      toast.success("图片分析完成！");
+    } catch (e: any) { toast.error(e.message || "分析失败，请检查模型配置"); }
+    finally { setAnalyzing(false); }
+  }, [imagePreview, analyzeImageMut]);
 
-  // ── Resize handlers（仅「选择」模式下可拖四角缩放）───────────────────────────
-  const handleResizeStart = useCallback((e: React.MouseEvent, item: InspirationCard, dir: ResizeDir) => {
-    if (tool !== "select") return;
-    e.preventDefault();
-    e.stopPropagation();
-    setResizing({
-      id: item.id,
-      dir,
-      startX: e.clientX,
-      startY: e.clientY,
-      startW: item.width ?? 200,
-      startH: item.height ?? 120,
-      startPosX: item.posX ?? 0,
-      startPosY: item.posY ?? 0,
-    });
-  }, [tool]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    if (resizing !== null) {
-      const dx = e.clientX - resizing.startX;
-      const dy = e.clientY - resizing.startY;
-      let newW = resizing.startW;
-      let newH = resizing.startH;
-      let newPosX = resizing.startPosX;
-      let newPosY = resizing.startPosY;
-
-      if (resizing.dir === "se") {
-        newW = Math.max(MIN_W, resizing.startW + dx);
-        newH = Math.max(MIN_H, resizing.startH + dy);
-      } else if (resizing.dir === "sw") {
-        newW = Math.max(MIN_W, resizing.startW - dx);
-        newH = Math.max(MIN_H, resizing.startH + dy);
-        newPosX = resizing.startPosX + (resizing.startW - newW);
-      } else if (resizing.dir === "ne") {
-        newW = Math.max(MIN_W, resizing.startW + dx);
-        newH = Math.max(MIN_H, resizing.startH - dy);
-        newPosY = resizing.startPosY + (resizing.startH - newH);
-      } else if (resizing.dir === "nw") {
-        newW = Math.max(MIN_W, resizing.startW - dx);
-        newH = Math.max(MIN_H, resizing.startH - dy);
-        newPosX = resizing.startPosX + (resizing.startW - newW);
-        newPosY = resizing.startPosY + (resizing.startH - newH);
-      }
-
-      utils.inspiration.list.setData(undefined, (old) =>
-        old?.map(item => item.id === resizing.id
-          ? { ...item, width: newW, height: newH, posX: newPosX, posY: newPosY }
-          : item
-        )
-      );
-      return;
-    }
-
-    if (dragging === null) return;
-    const newX = e.clientX - rect.left - dragOffset.x;
-    const newY = e.clientY - rect.top - dragOffset.y;
-    utils.inspiration.list.setData(undefined, (old) =>
-      old?.map(item => item.id === dragging ? { ...item, posX: newX, posY: newY } : item)
-    );
-  }, [dragging, dragOffset, resizing, utils]);
-
-  const handleMouseUp = useCallback(() => {
-    if (resizing !== null) {
-      const item = items?.find(i => i.id === resizing.id);
-      if (item) {
-        updatePos.mutate({
-          id: resizing.id,
-          posX: item.posX ?? 0,
-          posY: item.posY ?? 0,
-          width: item.width ?? 200,
-          height: item.height ?? 120,
-        });
-      }
-      setResizing(null);
-      return;
-    }
-    if (dragging === null) return;
-    const item = items?.find(i => i.id === dragging);
-    if (item) updatePos.mutate({ id: dragging, posX: item.posX ?? 0, posY: item.posY ?? 0 });
-    setDragging(null);
-  }, [dragging, resizing, items, updatePos]);
-
-  const handleCardClick = useCallback((e: React.MouseEvent, item: InspirationCard) => {
-    e.stopPropagation();
-    if (tool !== "select") return;
-    if (dragging !== null || resizing !== null) return;
-    setSelectedCard(prev => prev?.id === item.id ? null : item);
-  }, [dragging, resizing, tool]);
-
-  const activeCursor =
-    tool !== "select"
-      ? ""
-      : resizing
-        ? RESIZE_CURSORS[resizing.dir]
-        : dragging !== null
-          ? "cursor-grabbing"
-          : "";
-
-  const redrawDrawLayer = useCallback(() => {
-    const canvas = drawLayerRef.current;
-    const wrap = drawLayerWrapRef.current;
-    if (!canvas || !wrap) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const w = wrap.clientWidth;
-    const h = wrap.clientHeight;
-    if (w <= 0 || h <= 0) return;
-
-    if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
-      canvas.width = Math.floor(w * dpr);
-      canvas.height = Math.floor(h * dpr);
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-    }
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-
-    // Strokes
-    for (const s of strokes) {
-      if (s.points.length < 2) continue;
-      ctx.save();
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.lineWidth = s.width;
-      if (s.mode === "eraser") {
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.strokeStyle = "rgba(0,0,0,1)";
-      } else {
-        ctx.globalCompositeOperation = "source-over";
-        ctx.strokeStyle = s.color;
-      }
-      ctx.beginPath();
-      ctx.moveTo(s.points[0].x, s.points[0].y);
-      for (let i = 1; i < s.points.length; i++) ctx.lineTo(s.points[i].x, s.points[i].y);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    // Stamps
-    for (const m of stamps) {
-      ctx.save();
-      ctx.globalCompositeOperation = "source-over";
-      ctx.font = `700 ${m.size}px ui-sans-serif, system-ui`;
-      ctx.textBaseline = "middle";
-      ctx.textAlign = "center";
-      ctx.fillText(m.text, m.x, m.y);
-      ctx.restore();
-    }
-  }, [strokes, stamps]);
-
-  useEffect(() => {
-    redrawDrawLayer();
-  }, [redrawDrawLayer]);
-
-  useEffect(() => {
-    const onResize = () => redrawDrawLayer();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [redrawDrawLayer]);
-
-  const getLocalPoint = (e: React.PointerEvent) => {
-    const wrap = drawLayerWrapRef.current;
-    if (!wrap) return null;
-    const rect = wrap.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  };
-
-  const handleDrawPointerDown = (e: React.PointerEvent) => {
-    if (tool === "select") return;
-    e.preventDefault();
-    e.stopPropagation();
-    const p = getLocalPoint(e);
-    if (!p) return;
-
-    if (tool === "stamp") {
-      setStamps(prev => prev.concat({
-        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        x: p.x,
-        y: p.y,
-        text: stamp,
-        size: 26,
+  const handleExpand = useCallback(async () => {
+    if (!analysis?.prompt) return;
+    setExpanding(true);
+    try {
+      const result = await expandInspirationMut.mutateAsync({ prompt: analysis.prompt, mode: expandMode });
+      const newCards: InspirationCard[] = (result.cards || []).map((c: any, i: number) => ({
+        id: `${Date.now()}-${i}`, title: c.title, category: c.category,
+        prompt: c.prompt, promptCn: c.promptCn || "", description: c.description, saved: false,
       }));
-      return;
-    }
+      setAllCards(prev => [...prev, ...newCards]);
+      setActiveFilter("all");
+      toast.success(`已生成 ${newCards.length} 张灵感卡片`);
+      if (imagePreview && analysis) {
+        const item: HistoryItem = {
+          id: `${Date.now()}`, timestamp: Date.now(),
+          prompt: analysis.prompt, imagePreview: imagePreview || undefined, analysis, cards: newCards,
+        };
+        const updated = [item, ...history].slice(0, 50);
+        setHistory(updated); saveHistory(updated);
+      }
+    } catch (e: any) { toast.error(e.message || "灵感发散失败，请检查模型配置"); }
+    finally { setExpanding(false); }
+  }, [analysis, expandMode, expandInspirationMut, imagePreview, history]);
 
-    const mode = tool === "eraser" ? "eraser" : "pen";
-    const s: Stroke = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      mode,
-      color: penColor,
-      width: tool === "eraser" ? Math.max(10, penWidth * 4) : penWidth,
-      points: [p],
-    };
-    activeStrokeRef.current = s;
-    setIsDrawing(true);
-    setStrokes(prev => prev.concat(s));
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-  };
+  const handleChatExpand = useCallback(async () => {
+    if (!analysis?.prompt || !chatInput.trim()) return;
+    setChatLoading(true);
+    try {
+      const result = await chatExpandMut.mutateAsync({ basePrompt: analysis.prompt, userMessage: chatInput.trim() });
+      const newCards: InspirationCard[] = (result.cards || []).map((c: any, i: number) => ({
+        id: `chat-${Date.now()}-${i}`, title: c.title, category: c.category,
+        prompt: c.prompt, promptCn: c.promptCn || "", description: c.description, saved: false,
+      }));
+      setAllCards(prev => [...prev, ...newCards]);
+      setChatInput("");
+      toast.success(`AI 根据你的描述生成了 ${newCards.length} 张灵感卡片`);
+    } catch (e: any) { toast.error(e.message || "对话发散失败"); }
+    finally { setChatLoading(false); }
+  }, [analysis, chatInput, chatExpandMut]);
 
-  const handleDrawPointerMove = (e: React.PointerEvent) => {
-    if (!isDrawing) return;
-    if (tool !== "pen" && tool !== "eraser") return;
-    const p = getLocalPoint(e);
-    if (!p) return;
-    const current = activeStrokeRef.current;
-    if (!current) return;
+  const copyText = useCallback((text: string) => { navigator.clipboard.writeText(text); toast.success("已复制到剪贴板"); }, []);
+  const copyAllPrompts = useCallback(() => {
+    const all = [analysis?.prompt, ...filteredCards.map(c => `${c.promptCn}\n${c.prompt}`)].filter(Boolean).join("\n\n---\n\n");
+    copyText(all);
+  }, [analysis, filteredCards, copyText]);
+  const handleClear = useCallback(() => { setImagePreview(null); setAnalysis(null); setAllCards([]); setActiveFilter("all"); }, []);
+  const toggleSave = useCallback((id: string) => {
+    setAllCards(prev => prev.map(c => c.id === id ? { ...c, saved: !c.saved } : c));
+  }, []);
 
-    // Append point to the last stroke
-    setStrokes(prev => {
-      const last = prev[prev.length - 1];
-      if (!last || last.id !== current.id) return prev;
-      const next = { ...last, points: last.points.concat(p) };
-      return prev.slice(0, -1).concat(next);
-    });
-  };
+  const handleCardDragStart = useCallback((idx: number) => { setDragIdx(idx); }, []);
+  const handleCardDragOver = useCallback((e: React.DragEvent, idx: number) => { e.preventDefault(); setDragOverIdx(idx); }, []);
+  const handleCardDrop = useCallback((targetIdx: number) => {
+    if (dragIdx === null || dragIdx === targetIdx) { setDragIdx(null); setDragOverIdx(null); return; }
+    // reorder within filtered view, then map back
+    const newFiltered = [...filteredCards];
+    const [moved] = newFiltered.splice(dragIdx, 1);
+    newFiltered.splice(targetIdx, 0, moved);
+    // rebuild allCards: replace filtered subset with reordered, keep others
+    const filteredIds = new Set(newFiltered.map(c => c.id));
+    const others = allCards.filter(c => !filteredIds.has(c.id));
+    setAllCards([...newFiltered, ...others]);
+    setDragIdx(null); setDragOverIdx(null);
+  }, [dragIdx, filteredCards, allCards]);
 
-  const handleDrawPointerUp = (e: React.PointerEvent) => {
-    if (!isDrawing) return;
-    if (tool !== "pen" && tool !== "eraser") return;
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDrawing(false);
-    activeStrokeRef.current = null;
-  };
+  const restoreHistory = useCallback((item: HistoryItem) => {
+    setAnalysis(item.analysis); setAllCards(item.cards); setActiveFilter("all"); setShowHistory(false);
+    if (item.imagePreview) { setImagePreview(item.imagePreview); }
+    toast.success("已恢复历史记录");
+  }, []);
+  const deleteHistory = useCallback((id: string) => {
+    const updated = history.filter(h => h.id !== id); setHistory(updated); saveHistory(updated);
+  }, [history]);
 
   return (
     <div className="min-h-screen flex flex-col" style={{ height: "calc(100vh - 56px)" }}>
@@ -410,376 +201,328 @@ export default function Inspiration() {
             <div className="w-9 h-9 rounded-xl bg-pink-100 flex items-center justify-center">
               <Sparkles className="w-5 h-5 text-pink-600" />
             </div>
-            <h1 className="font-display text-2xl font-bold">灵感碰撞墙</h1>
+            <h1 className="font-display text-2xl font-bold">灵感工坊</h1>
           </div>
-          <p className="text-muted-foreground text-sm ml-11">
-            自由拖拽灵感素材，拖拽四角调整大小；左侧工具栏支持画笔/印章/橡皮
-          </p>
+          <p className="text-muted-foreground text-sm ml-11">上传图片提取 AI 绘图提示词，一键发散多维灵感变体</p>
         </div>
-        <Dialog open={addOpen} onOpenChange={setAddOpen}>
-          <DialogTrigger asChild>
-            <Button className="rounded-xl gap-2"><Plus className="w-4 h-4" />添加灵感</Button>
-          </DialogTrigger>
-          <DialogContent className="rounded-2xl">
-            <DialogHeader><DialogTitle className="font-display">添加灵感卡片</DialogTitle></DialogHeader>
-            <div className="space-y-4 pt-2">
-              <div className="flex gap-2">
-                {[{ v: "text", icon: Type, label: "文字" }, { v: "link", icon: Link2, label: "链接" }, { v: "image", icon: Image, label: "图片" }].map(({ v, icon: Icon, label }) => (
-                  <button
-                    key={v}
-                    onClick={() => setForm(p => ({ ...p, type: v as any }))}
-                    className={cn("flex-1 flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-colors", form.type === v ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/50")}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="text-xs">{label}</span>
-                  </button>
-                ))}
-              </div>
-              <Input placeholder="标题（可选）" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} className="rounded-xl" />
-              {form.type === "text" && (
-                <textarea placeholder="灵感内容..." value={form.content} onChange={e => setForm(p => ({ ...p, content: e.target.value }))} className="w-full rounded-xl border border-input p-3 text-sm min-h-24 resize-none focus:outline-none focus:ring-2 focus:ring-ring" />
-              )}
-              {form.type === "link" && (
-                <Input placeholder="URL 链接" value={form.url} onChange={e => setForm(p => ({ ...p, url: e.target.value }))} className="rounded-xl" />
-              )}
-              {form.type === "image" && (
-                <Input placeholder="图片 URL" value={form.url} onChange={e => setForm(p => ({ ...p, url: e.target.value }))} className="rounded-xl" />
-              )}
-              <div>
-                <p className="text-xs text-muted-foreground mb-2">卡片颜色</p>
-                <div className="flex gap-2">
-                  {CARD_COLORS.map(c => (
-                    <button
-                      key={c.value}
-                      onClick={() => setForm(p => ({ ...p, color: c.value }))}
-                      className={cn("w-7 h-7 rounded-full border-2 transition-transform hover:scale-110", form.color === c.value ? "border-primary scale-110" : "border-transparent")}
-                      style={{ backgroundColor: c.value, outline: `1px solid ${c.border}` }}
-                    />
-                  ))}
-                </div>
-              </div>
-              <Button className="w-full rounded-xl" onClick={() => create.mutate({ type: form.type, title: form.title || undefined, content: form.content || undefined, url: form.url || undefined, color: form.color, posX: Math.random() * 400 + 50, posY: Math.random() * 300 + 50 })} disabled={create.isPending}>
-                {create.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}添加到画布
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-        <Dialog open={editOpen} onOpenChange={(open) => {
-          setEditOpen(open);
-          if (!open) setEditingCard(null);
-        }}>
-          <DialogContent className="rounded-2xl">
-            <DialogHeader>
-              <DialogTitle className="font-display">编辑便利贴</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 pt-2">
-              <Input
-                placeholder="标题（可选）"
-                value={editForm.title}
-                onChange={(e) => setEditForm((prev) => ({ ...prev, title: e.target.value }))}
-                className="rounded-xl"
-              />
-              <textarea
-                placeholder="灵感内容..."
-                value={editForm.content}
-                onChange={(e) => setEditForm((prev) => ({ ...prev, content: e.target.value }))}
-                className="w-full rounded-xl border border-input p-3 text-sm min-h-28 resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-              <Button
-                className="w-full rounded-xl"
-                onClick={handleSaveEdit}
-                disabled={updateContent.isPending || !editingCard}
-              >
-                {updateContent.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                保存修改
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="rounded-xl gap-1.5" onClick={() => setShowHistory(!showHistory)}>
+            <Clock className="w-4 h-4" />历史记录
+            {history.length > 0 && <span className="ml-1 text-xs bg-pink-100 text-pink-700 rounded-full px-1.5">{history.length}</span>}
+          </Button>
+          <Button variant="outline" size="sm" className="rounded-xl gap-1.5" onClick={() => setModelConfigOpen(true)}>
+            <Settings2 className="w-4 h-4" />模型配置
+          </Button>
+        </div>
       </div>
 
-      {/* Canvas */}
-      <div className="flex-1 mx-8 overflow-hidden">
-        <div
-          className={cn("w-full h-full rounded-2xl border border-gray-200 relative overflow-hidden", activeCursor)}
-          style={{
-            backgroundImage: "radial-gradient(circle, #d1d5db 1px, transparent 1px)",
-            backgroundSize: "24px 24px",
-            backgroundColor: "#ffffff",
-          }}
-          onClick={() => setSelectedCard(null)}
-        >
-          {/* Left toolbar */}
-          <div className="absolute left-4 top-4 z-30">
-            <div className="rounded-2xl border bg-white/90 backdrop-blur px-2 py-2 shadow-sm flex flex-col gap-2">
-              <button
-                className={cn("w-10 h-10 rounded-xl border flex items-center justify-center transition-colors",
-                  tool === "select" ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50")}
-                onClick={(e) => { e.stopPropagation(); setTool("select"); }}
-                title="选择/拖拽"
-              >
-                <Move className="w-4 h-4" />
-              </button>
-              <button
-                className={cn("w-10 h-10 rounded-xl border flex items-center justify-center transition-colors",
-                  tool === "pen" ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50")}
-                onClick={(e) => { e.stopPropagation(); setTool("pen"); }}
-                title="画笔"
-              >
-                <Pencil className="w-4 h-4" />
-              </button>
-              <button
-                className={cn("w-10 h-10 rounded-xl border flex items-center justify-center transition-colors",
-                  tool === "eraser" ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50")}
-                onClick={(e) => { e.stopPropagation(); setTool("eraser"); }}
-                title="橡皮"
-              >
-                <Eraser className="w-4 h-4" />
-              </button>
-              <button
-                className={cn("w-10 h-10 rounded-xl border flex items-center justify-center transition-colors",
-                  tool === "stamp" ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50")}
-                onClick={(e) => { e.stopPropagation(); setTool("stamp"); }}
-                title="印章"
-              >
-                <Stamp className="w-4 h-4" />
-              </button>
+      {/* Main */}
+      <div className="flex-1 mx-8 mb-6 overflow-auto">
+        <div className="grid grid-cols-12 gap-6 h-full">
+          {/* ═══ Left: Upload + Prompt ═══ */}
+          <div className="col-span-4 flex flex-col gap-4 overflow-auto pr-1">
+            {/* Upload */}
+            <div
+              className={cn("rounded-2xl border-2 border-dashed p-6 text-center transition-all cursor-pointer",
+                imageDragging ? "border-pink-400 bg-pink-50" : imagePreview ? "border-gray-200 bg-white" : "border-gray-300 bg-gray-50 hover:border-pink-300 hover:bg-pink-50/30")}
+              onDrop={handleDrop}
+              onDragOver={(e) => { e.preventDefault(); setImageDragging(true); }}
+              onDragLeave={() => setImageDragging(false)}
+              onClick={() => !imagePreview && fileInputRef.current?.click()}
+            >
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+                onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+              {imagePreview ? (
+                <div className="space-y-3">
+                  <img src={imagePreview} alt="Preview" className="max-h-48 mx-auto rounded-xl object-contain" />
+                  <div className="flex items-center justify-center gap-2">
+                    <Button size="sm" variant="outline" className="rounded-xl gap-1.5 text-xs"
+                      onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
+                      <Upload className="w-3.5 h-3.5" />更换图片
+                    </Button>
+                    <Button size="sm" variant="outline" className="rounded-xl gap-1.5 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                      onClick={(e) => { e.stopPropagation(); handleClear(); }}>
+                      <Trash2 className="w-3.5 h-3.5" />清空
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="py-6">
+                  <Image className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                  <p className="text-sm font-medium text-gray-600">点击上传或拖拽图片到此处</p>
+                  <p className="text-xs text-gray-400 mt-1">支持 JPG、PNG、WebP，最大 10MB</p>
+                </div>
+              )}
+            </div>
 
-              {/* tool options */}
-              <div className="pt-1 border-t border-gray-100 flex flex-col gap-2 px-1">
-                {(tool === "pen" || tool === "eraser") && (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-gray-500 w-7">粗细</span>
-                      <input
-                        type="range"
-                        min={2}
-                        max={10}
-                        value={penWidth}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => setPenWidth(parseInt(e.target.value, 10))}
-                        className="w-24"
-                      />
-                    </div>
-                    {tool === "pen" && (
-                      <div className="flex flex-col gap-2">
-                        <div className="grid grid-cols-5 gap-1.5 w-[152px]">
-                          {PEN_PRESET_COLORS.map((c) => (
-                            <button
-                              key={c}
-                              type="button"
-                              className={cn(
-                                "w-6 h-6 rounded-full border border-gray-200 shadow-inner transition-transform hover:scale-110",
-                                penColor.toLowerCase() === c.toLowerCase() ? "ring-2 ring-pink-500 ring-offset-1" : "",
-                              )}
-                              style={{ backgroundColor: c }}
-                              onClick={(e) => { e.stopPropagation(); setPenColor(c); }}
-                              title={c}
-                            />
-                          ))}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-gray-500 shrink-0">自定义</span>
-                          <input
-                            type="color"
-                            value={penColor.startsWith("#") && penColor.length >= 7 ? penColor.slice(0, 7) : "#111827"}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => { e.stopPropagation(); setPenColor(e.target.value); }}
-                            className="h-7 w-12 cursor-pointer rounded-md border border-gray-200 bg-white p-0.5"
-                            title="自定义颜色"
-                          />
-                          <span className="text-[10px] text-gray-400 font-mono truncate max-w-[4.5rem]" title={penColor}>
-                            {penColor}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </>
+            {imagePreview && !analysis && (
+              <Button className="w-full rounded-xl gap-2 bg-pink-600 hover:bg-pink-700" onClick={handleAnalyze} disabled={analyzing}>
+                {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                {analyzing ? "AI 分析中..." : "提取提示词"}
+              </Button>
+            )}
+
+            {/* Analysis Result */}
+            {analysis && (
+              <div className="rounded-2xl border bg-white p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-sm flex items-center gap-1.5">
+                    <CheckCircle className="w-4 h-4 text-emerald-500" />提示词提取结果
+                  </h3>
+                </div>
+
+                {/* Chinese summary */}
+                {analysis.summaryCn && (
+                  <div className="bg-pink-50 rounded-xl p-3 border border-pink-100">
+                    <p className="text-xs font-medium text-pink-600 mb-1">中文整合描述</p>
+                    <p className="text-sm text-gray-800 leading-relaxed">{analysis.summaryCn}</p>
+                    <button className="mt-1.5 text-[10px] text-pink-500 hover:text-pink-700 flex items-center gap-0.5"
+                      onClick={() => copyText(analysis.summaryCn)}>
+                      <Copy className="w-2.5 h-2.5" />复制中文
+                    </button>
+                  </div>
                 )}
-                {tool === "stamp" && (
-                  <div className="grid grid-cols-5 gap-1 w-[152px]">
-                    {STAMP_EMOJIS.map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        className={cn(
-                          "w-7 h-7 rounded-lg border text-base leading-none flex items-center justify-center",
-                          stamp === s ? "bg-gray-900 text-white border-gray-900" : "bg-white border-gray-200 hover:bg-gray-50",
-                        )}
-                        onClick={(e) => { e.stopPropagation(); setStamp(s); }}
-                        title={`印章 ${s}`}
-                      >
-                        {s}
+
+                {/* English prompt */}
+                <div className="bg-gray-50 rounded-xl p-3 border">
+                  <p className="text-xs font-medium text-gray-500 mb-1.5">AI 绘图提示词（英文）</p>
+                  <p className="text-sm text-gray-800 leading-relaxed font-mono">{analysis.prompt}</p>
+                  <button className="mt-1.5 text-[10px] text-gray-500 hover:text-gray-700 flex items-center gap-0.5"
+                    onClick={() => copyText(analysis.prompt)}>
+                    <Copy className="w-2.5 h-2.5" />复制英文
+                  </button>
+                </div>
+
+                {/* Dimension tags */}
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { label: "主体", value: analysis.subject },
+                    { label: "风格", value: analysis.style },
+                    { label: "色彩", value: analysis.colorPalette },
+                    { label: "构图", value: analysis.composition },
+                    { label: "光影", value: analysis.lighting },
+                    { label: "质感", value: analysis.texture },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="bg-gray-50 rounded-lg p-2 border border-gray-100">
+                      <p className="text-[10px] font-medium text-gray-400 mb-0.5">{label}</p>
+                      <p className="text-xs text-gray-700 leading-snug">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                {analysis.details && (
+                  <div className="bg-gray-50 rounded-lg p-2 border border-gray-100">
+                    <p className="text-[10px] font-medium text-gray-400 mb-0.5">细节</p>
+                    <p className="text-xs text-gray-700 leading-snug">{analysis.details}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ═══ Right: Inspiration Cards ═══ */}
+          <div className="col-span-8 flex flex-col gap-4 overflow-auto">
+            {analysis && (
+              <div className="rounded-2xl border bg-white p-4 space-y-3">
+                {/* Chat bar */}
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-pink-500 shrink-0" />
+                  <Input
+                    placeholder="用自然语言描述你想要的灵感方向，如：加一些日式浮世绘风格、改成雨天夜景氛围..."
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !chatLoading) { e.preventDefault(); handleChatExpand(); } }}
+                    className="rounded-xl text-sm h-9 flex-1"
+                    disabled={chatLoading}
+                  />
+                  <Button size="sm" className="rounded-xl gap-1 bg-pink-600 hover:bg-pink-700 shrink-0 h-9 px-3"
+                    onClick={handleChatExpand} disabled={chatLoading || !chatInput.trim()}>
+                    {chatLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  </Button>
+                </div>
+
+                {/* Filter tabs + expand controls */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <h3 className="font-semibold text-sm flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-pink-500" />灵感发散
+                    </h3>
+                    {/* Filter tabs */}
+                    <div className="flex gap-1">
+                      {(["all", "style", "composition", "mood"] as const).map((f) => {
+                        const count = catCounts[f];
+                        const isActive = activeFilter === f;
+                        return (
+                          <button key={f} onClick={() => setActiveFilter(f)}
+                            className={cn("px-2.5 py-1 rounded-lg text-xs font-medium border transition-all",
+                              isActive ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-500 border-gray-200 hover:border-gray-400")}>
+                            {f === "all" ? "全部" : CATEGORY_MAP[f].label}
+                            {count > 0 && <span className={cn("ml-1", isActive ? "text-gray-300" : "text-gray-400")}>{count}</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {allCards.length > 0 && (
+                      <Button size="sm" variant="outline" className="rounded-xl gap-1.5 text-xs h-7" onClick={copyAllPrompts}>
+                        <Copy className="w-3 h-3" />复制全部
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Expand row */}
+                <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
+                  <span className="text-xs text-gray-400 shrink-0">批量生成：</span>
+                  <div className="flex gap-1">
+                    {(["all", "style", "composition", "mood"] as const).map((m) => (
+                      <button key={m} onClick={() => setExpandMode(m)}
+                        className={cn("px-2 py-0.5 rounded text-[11px] font-medium border transition-colors",
+                          expandMode === m ? "bg-pink-600 text-white border-pink-600" : "bg-white text-gray-500 border-gray-200 hover:border-pink-300")}>
+                        {m === "all" ? "全部" : CATEGORY_MAP[m].label}
                       </button>
                     ))}
                   </div>
-                )}
-
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="rounded-xl text-xs"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setStrokes([]);
-                    setStamps([]);
-                  }}
-                >
-                  清空笔记
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          {isLoading ? (
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
-            <div
-              ref={canvasRef}
-              className="relative w-full h-full"
-              style={{ minHeight: "400px" }}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-            >
-              {/* Drawing layer：始终渲染，外层 pointer-events-none 不挡便利贴；仅 canvas 在绘制模式下接事件 */}
-              <div ref={drawLayerWrapRef} className="absolute inset-0 z-10 pointer-events-none">
-                <canvas
-                  ref={drawLayerRef}
-                  className={cn("absolute inset-0", tool === "select" ? "pointer-events-none" : "pointer-events-auto")}
-                  style={{ touchAction: "none" }}
-                  onPointerDown={handleDrawPointerDown}
-                  onPointerMove={handleDrawPointerMove}
-                  onPointerUp={handleDrawPointerUp}
-                  onPointerCancel={handleDrawPointerUp}
-                />
-              </div>
-
-              {/* 空状态提示（不阻止画布和工具层渲染） */}
-              {(!items || items.length === 0) && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground pointer-events-none z-0">
-                  <Sparkles className="w-12 h-12 mb-3 opacity-20" />
-                  <p className="text-sm font-medium">画布是空的</p>
-                  <p className="text-xs mt-1">点击「添加灵感」开始创作，或使用左侧画笔工具</p>
+                  <Button className="rounded-xl gap-1.5 ml-auto bg-pink-600 hover:bg-pink-700 h-7 text-xs" size="sm"
+                    onClick={handleExpand} disabled={expanding}>
+                    {expanding ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                    {expanding ? "发散中..." : "生成灵感"}
+                  </Button>
                 </div>
-              )}
+              </div>
+            )}
 
-              {items?.map((item) => {
-                const tags = (item.styleTags as string[]) || [];
-                const isSelected = selectedCard?.id === item.id;
-                const isAIReply = item.title === "✨ AI 回复";
-                const cardW = item.width ?? 200;
-                const cardH = item.height ?? 120;
-
-                return (
-                  <div
-                    key={item.id}
-                    className={cn(
-                      "absolute rounded-2xl border-2 p-3 shadow-sm hover:shadow-md transition-shadow select-none",
-                      tool === "select" ? "pointer-events-auto" : "pointer-events-none",
-                      isSelected && "ring-2 ring-pink-400/60 shadow-lg",
-                      dragging === item.id && "shadow-xl z-50",
-                      resizing?.id === item.id && "z-50",
-                      isAIReply && "border-blue-200"
-                    )}
-                    style={{
-                      left: item.posX ?? 0,
-                      top: item.posY ?? 0,
-                      width: cardW,
-                      height: cardH,
-                      backgroundColor: isAIReply ? "#eff6ff" : (item.color || "#ffffff"),
-                      borderColor: isAIReply ? "#bfdbfe" : (CARD_COLORS.find(c => c.value === item.color)?.border || "#e5e7eb"),
-                      zIndex: dragging === item.id || resizing?.id === item.id ? 50 : isSelected ? 10 : 1,
-                      overflow: "hidden",
-                    }}
-                    onMouseDown={(e) => handleMouseDown(e, item.id, item.posX ?? 0, item.posY ?? 0)}
-                    onClick={(e) => handleCardClick(e, item as InspirationCard)}
-                  >
-                    {/* Card header */}
-                    <div className="flex items-start justify-between gap-1 mb-1.5">
-                      <Move className={cn("w-3 h-3 text-gray-400 shrink-0 mt-0.5", tool === "select" ? "cursor-grab" : "cursor-default")} />
-                      <div className="flex items-center gap-1">
-                        {isSelected && (
-                          <button
-                            className="text-gray-400 hover:text-gray-700 transition-colors"
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEditDialog(item as InspirationCard);
-                            }}
-                            title="编辑便利贴"
-                          >
-                            <SquarePen className="w-3 h-3" />
+            {/* Cards grid */}
+            {filteredCards.length > 0 ? (
+              <div className="grid grid-cols-3 gap-3">
+                {filteredCards.map((card, idx) => {
+                  const cat = CATEGORY_MAP[card.category] || CATEGORY_MAP.style;
+                  return (
+                    <div key={card.id} draggable
+                      onDragStart={() => handleCardDragStart(idx)}
+                      onDragOver={(e) => handleCardDragOver(e, idx)}
+                      onDrop={() => handleCardDrop(idx)}
+                      onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
+                      className={cn(
+                        "rounded-2xl border p-4 bg-white transition-all hover:shadow-md cursor-grab active:cursor-grabbing relative",
+                        dragOverIdx === idx && "ring-2 ring-pink-300",
+                        dragIdx === idx && "opacity-50"
+                      )}>
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <GripVertical className="w-3.5 h-3.5 text-gray-300" />
+                          <span className={cn("text-[10px] font-medium px-2 py-0.5 rounded-full border", cat.bg, cat.color)}>{cat.label}</span>
+                        </div>
+                        <div className="flex items-center gap-0.5">
+                          <button className="p-1 text-gray-400 hover:text-pink-500 transition-colors"
+                            onClick={() => toggleSave(card.id)} title={card.saved ? "取消收藏" : "收藏"}>
+                            {card.saved ? <BookmarkCheck className="w-3.5 h-3.5 text-pink-500" /> : <Bookmark className="w-3.5 h-3.5" />}
                           </button>
+                          <button className="p-1 text-gray-400 hover:text-blue-500 transition-colors"
+                            onClick={() => copyText(`${card.promptCn || card.description}\n\n${card.prompt}`)} title="复制中英文提示词">
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      <h4 className="font-semibold text-sm mb-1">{card.title}</h4>
+                      <p className="text-xs text-gray-500 mb-2">{card.description}</p>
+                      {/* Chinese prompt with hover tooltip */}
+                      <div className="relative group/cn mb-1.5">
+                        <div className="bg-gray-50 rounded-lg p-2 border border-gray-100">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <p className="text-[10px] font-medium text-gray-400">中文提示词</p>
+                            <button className="text-[10px] text-gray-400 hover:text-blue-500 flex items-center gap-0.5 opacity-0 group-hover/cn:opacity-100 transition-opacity"
+                              onClick={() => copyText(card.promptCn || card.description)}>
+                              <Copy className="w-2.5 h-2.5" />复制
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-gray-700 leading-relaxed line-clamp-3">{card.promptCn || card.description}</p>
+                        </div>
+                        {(card.promptCn || card.description).length > 50 && (
+                          <div className="pointer-events-none absolute z-50 left-0 right-0 top-full mt-1 bg-gray-900 text-white rounded-xl p-3 shadow-xl max-h-40 overflow-auto invisible group-hover/cn:visible opacity-0 group-hover/cn:opacity-100 transition-all duration-150">
+                            <p className="text-[10px] font-medium text-gray-300 mb-1">完整中文提示词</p>
+                            <p className="text-xs leading-relaxed">{card.promptCn || card.description}</p>
+                          </div>
                         )}
-                        {isSelected && (
-                          <button
-                            className="text-gray-400 hover:text-red-500 transition-colors"
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={(e) => { e.stopPropagation(); deleteItem.mutate({ id: item.id }); }}
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
+                      </div>
+                      {/* English prompt with hover tooltip */}
+                      <div className="relative group/en">
+                        <div className="bg-gray-50 rounded-lg p-2 border border-gray-100">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <p className="text-[10px] font-medium text-gray-400">English Prompt</p>
+                            <button className="text-[10px] text-gray-400 hover:text-blue-500 flex items-center gap-0.5 opacity-0 group-hover/en:opacity-100 transition-opacity"
+                              onClick={() => copyText(card.prompt)}>
+                              <Copy className="w-2.5 h-2.5" />复制
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-gray-600 font-mono leading-relaxed line-clamp-2">{card.prompt}</p>
+                        </div>
+                        {card.prompt.length > 50 && (
+                          <div className="pointer-events-none absolute z-50 left-0 right-0 top-full mt-1 bg-gray-900 text-white rounded-xl p-3 shadow-xl invisible group-hover/en:visible opacity-0 group-hover/en:opacity-100 transition-all duration-150">
+                            <p className="text-[10px] font-medium text-gray-300 mb-1">完整英文提示词</p>
+                            <p className="text-xs font-mono leading-relaxed break-all">{card.prompt}</p>
+                          </div>
                         )}
                       </div>
                     </div>
-
-                    {/* Card content */}
-                    {item.title && (
-                      <p className={cn("text-xs font-semibold mb-1 leading-tight", isAIReply ? "text-blue-700" : "text-gray-800")}>
-                        {item.title}
-                      </p>
-                    )}
-                    {item.content && <p className="text-xs text-gray-600 leading-relaxed overflow-hidden">{item.content}</p>}
-                    {item.url && item.type === "link" && (
-                      <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 underline break-all" onMouseDown={e => e.stopPropagation()}>
-                        {item.url.slice(0, 40)}...
-                      </a>
-                    )}
-                    {(item.imageUrl || (item.url && item.type === "image")) && (
-                      <img src={item.imageUrl || item.url || ""} alt="" className="w-full rounded-lg mt-1 object-cover" style={{ maxHeight: cardH - 60 }} />
-                    )}
-                    {tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {tags.map((tag) => (
-                          <span key={tag} className="flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-white/70 text-gray-600 border border-gray-200">
-                            <Tag className="w-2 h-2" />{tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* ── Resize handles (4 corners) — always visible on selected, subtle otherwise ── */}
-                    {(["se", "sw", "ne", "nw"] as ResizeDir[]).map((dir) => {
-                      const isCornerSE = dir === "se";
-                      const isCornerSW = dir === "sw";
-                      const isCornerNE = dir === "ne";
-                      const isCornerNW = dir === "nw";
-                      return (
-                        <div
-                          key={dir}
-                          className={cn(
-                            "absolute w-3 h-3 rounded-sm border-2 border-white bg-pink-400 opacity-0 hover:opacity-100 transition-opacity z-30",
-                            isSelected && "opacity-70",
-                            RESIZE_CURSORS[dir],
-                            isCornerSE && "bottom-1 right-1",
-                            isCornerSW && "bottom-1 left-1",
-                            isCornerNE && "top-1 right-1",
-                            isCornerNW && "top-1 left-1",
-                          )}
-                          onMouseDown={(e) => handleResizeStart(e, item as InspirationCard, dir)}
-                        />
-                      );
-                    })}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            ) : analysis ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+                <Sparkles className="w-10 h-10 mb-3 opacity-20" />
+                <p className="text-sm">{allCards.length > 0 ? "当前分类暂无卡片，试试切换其他分类" : "点击「生成灵感」或输入描述开始创意发散"}</p>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+                <Image className="w-10 h-10 mb-3 opacity-20" />
+                <p className="text-sm">上传图片后开始提取提示词</p>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* History Panel */}
+        {showHistory && (
+          <div className="fixed inset-0 bg-black/20 z-50" onClick={() => setShowHistory(false)}>
+            <div className="absolute right-0 top-0 h-full w-96 bg-white shadow-xl p-6 overflow-auto"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold">历史记录</h3>
+                <Button size="sm" variant="ghost" onClick={() => setShowHistory(false)}>关闭</Button>
+              </div>
+              {history.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-12">暂无历史记录</p>
+              ) : (
+                <div className="space-y-3">
+                  {history.map((item) => (
+                    <div key={item.id} className="rounded-xl border p-3 hover:bg-gray-50 transition-colors cursor-pointer"
+                      onClick={() => restoreHistory(item)}>
+                      <div className="flex gap-3">
+                        {item.imagePreview && (
+                          <img src={item.imagePreview} alt="历史图片" className="w-14 h-14 rounded-lg object-cover shrink-0 border border-gray-100" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs text-gray-400">{new Date(item.timestamp).toLocaleString("zh-CN")}</span>
+                            <button className="text-gray-300 hover:text-red-500 transition-colors"
+                              onClick={(e) => { e.stopPropagation(); deleteHistory(item.id); }}>
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                          <p className="text-xs text-gray-600 line-clamp-2 font-mono">{item.prompt}</p>
+                          <p className="text-[10px] text-gray-400 mt-1">{item.cards.length} 张灵感卡片</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
+      <ModelConfigDialog open={modelConfigOpen} onOpenChange={setModelConfigOpen} />
     </div>
   );
 }

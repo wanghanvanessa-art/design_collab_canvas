@@ -125,6 +125,42 @@ export default function Reviews() {
     setImagePreviews(prev => prev.filter((_, i) => i !== idx));
   };
 
+  // 压缩图片到目标大小以内（默认 2MB），确保 LLM 视觉模型能正确处理
+  const compressImage = (file: File, maxSizeBytes = 2 * 1024 * 1024): Promise<File> => {
+    return new Promise((resolve) => {
+      if (file.size <= maxSizeBytes) { resolve(file); return; }
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        // 按比例缩小，最大边不超过 2048px
+        const maxDim = 2048;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const ratio = Math.min(maxDim / width, maxDim / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              resolve(new File([blob], file.name, { type: "image/jpeg" }));
+            } else {
+              resolve(file);
+            }
+          },
+          "image/jpeg",
+          0.8,
+        );
+      };
+      img.onerror = () => resolve(file);
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
   const handleUpload = async () => {
     if (!title.trim()) { toast.error("请输入方案标题"); return; }
     if (imageFiles.length === 0) { toast.error("请选择设计稿图片"); return; }
@@ -139,8 +175,9 @@ export default function Reviews() {
     try {
       const designUrls: string[] = [];
       for (const file of imageFiles) {
+        const compressed = await compressImage(file);
         const formData = new FormData();
-        formData.append("image", file);
+        formData.append("image", compressed);
         const res = await fetch("/api/upload/image", { method: "POST", body: formData });
         if (!res.ok) {
           let msg = `上传失败（${res.status}）`;

@@ -17,8 +17,8 @@ import { cn } from "@/lib/utils";
 const FEATURES = [
   {
     id: "meetings", href: "/meetings", icon: Mic2,
-    label: "会议转待办", tag: "AI 驱动",
-    desc: "语音录音自动转文字，AI 提取核心思路，一键生成按优先级拆解的待办清单",
+    label: "AI 待办记事本", tag: "AI 驱动",
+    desc: "粘贴录音链接或零散文字记录，AI 自动解析并生成按优先级拆解的结构化待办清单",
     accent: "#7C3AED",
     iconBg: "bg-violet-50", iconColor: "text-violet-600",
     tagBg: "bg-violet-50 text-violet-600",
@@ -27,8 +27,8 @@ const FEATURES = [
   },
   {
     id: "ideas", href: "/ideas", icon: Lightbulb,
-    label: "想法落地页", tag: "协作互动",
-    desc: "开放式想法发布与实时评论互动，支持导出 PDF / 博客 / Word 等多格式交付物",
+    label: "AI 创意发散台", tag: "AI 驱动",
+    desc: "输入关键词或一句话，AI 自动生成多维度创意分支与结构化方案，支持拖拽重组、团队共创、一键导出交付物",
     accent: "#D97706",
     iconBg: "bg-amber-50", iconColor: "text-amber-600",
     tagBg: "bg-amber-50 text-amber-600",
@@ -57,8 +57,8 @@ const FEATURES = [
   },
   {
     id: "inspiration", href: "/inspiration", icon: Sparkles,
-    label: "灵感碰撞墙", tag: "创意画布",
-    desc: "画布式拖拽零散灵感、竞品截图、情绪板素材，AI 自动生成风格标签和相似设计推荐",
+    label: "灵感工坊", tag: "AI 提示词",
+    desc: "上传图片自动提取 AI 绘图提示词，基于提示词一键发散风格/构图/氛围变体灵感卡片，支持拖拽排序、一键复制、历史记录",
     accent: "#DB2777",
     iconBg: "bg-pink-50", iconColor: "text-pink-600",
     tagBg: "bg-pink-50 text-pink-600",

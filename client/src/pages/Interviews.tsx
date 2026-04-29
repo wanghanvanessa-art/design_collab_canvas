@@ -7,12 +7,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
-import { Users, Plus, Sparkles, Loader2, Tag, AlertTriangle, Lightbulb, X, ChevronRight, Edit3, Trash2, ExternalLink, Bot } from "lucide-react";
+import { Users, Plus, Sparkles, Loader2, Tag, AlertTriangle, Lightbulb, X, ChevronRight, Edit3, Trash2, ExternalLink, Bot, Settings2 } from "lucide-react";
 import { BackButton } from "@/components/BackButton";
+import { ModelConfigDialog } from "@/components/ModelConfigDialog";
 
 export default function Interviews() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [form, setForm] = useState({ title: "", interviewee: "", content: "", date: "" });
   const [editForm, setEditForm] = useState({ title: "", interviewee: "", content: "", date: "" });
@@ -36,7 +38,18 @@ export default function Interviews() {
       utils.interviews.get.invalidate({ id: selectedId! });
       utils.interviews.list.invalidate();
     },
-    onError: () => toast.error("分析失败，请重试"),
+    onError: (err) => {
+      const msg = err.message || "";
+      if (msg.includes("API Key") || msg.includes("api_key") || msg.includes("401")) {
+        toast.error("API Key 无效，请在「模型配置」中检查并重新填写正确的 API Key");
+      } else if (msg.includes("网络") || msg.includes("fetch") || msg.includes("ECONNREFUSED")) {
+        toast.error("网络连接失败，请检查 API 端点 URL 是否正确");
+      } else if (msg.includes("未配置")) {
+        toast.error("请先点击「模型配置」按钮配置 API Key");
+      } else {
+        toast.error(msg || "AI 分析失败，请检查模型配置后重试");
+      }
+    },
   });
 
   const update = trpc.interviews.update.useMutation({
@@ -68,6 +81,7 @@ export default function Interviews() {
   });
 
   return (
+    <>
     <div className="pb-8">
       <BackButton />
       <div className="flex items-start justify-between mb-8">
@@ -81,13 +95,16 @@ export default function Interviews() {
           <p className="text-muted-foreground text-sm ml-11">全流程管理访谈记录，AI 分析人群标签并自动生成设计解决方案</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="rounded-xl gap-1.5" onClick={() => setConfigOpen(true)}>
+            <Settings2 className="w-4 h-4" />模型配置
+          </Button>
           <Button
             variant="outline"
             className="rounded-xl gap-2 border-violet-200 text-violet-700 hover:bg-violet-50 hover:text-violet-800"
             onClick={() => { window.location.href = "joydesk://chat/1776163589269"; }}
           >
             <Bot className="w-4 h-4" />
-            AI 解析
+            小叮当AI
             <ExternalLink className="w-3 h-3 opacity-60" />
           </Button>
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -215,7 +232,7 @@ export default function Interviews() {
                   {detail.interviewee && <p className="text-sm text-muted-foreground mt-0.5">受访者：{detail.interviewee}</p>}
                 </div>
                 <div className="flex gap-2">
-                  {detail.status === "draft" && (
+                  {detail.status !== "analyzing" && (
                     <Button
                       size="sm"
                       className="rounded-xl gap-1.5"
@@ -223,7 +240,7 @@ export default function Interviews() {
                       disabled={analyze.isPending}
                     >
                       {analyze.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                      AI 分析
+                      {detail.status === "done" ? "重新分析" : "AI 解析"}
                     </Button>
                   )}
                   <Button
@@ -273,7 +290,7 @@ export default function Interviews() {
               {/* Analysis Results */}
               {detail.status === "done" && (
                 <div className="mt-auto pt-2 space-y-4">
-                  {/* Audience Labels (可选) */}
+                  {/* Audience Labels */}
                   {(detail.audienceLabels as string[])?.length > 0 && (
                     <div>
                       <div className="flex items-center gap-2 mb-2">
@@ -288,46 +305,64 @@ export default function Interviews() {
                     </div>
                   )}
 
-                  {/* Bottom: Pain summary + design solutions */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Pain Points Summary */}
+                  {(detail.painPoints as string[])?.length > 0 && (
                     <div className="p-4 rounded-xl bg-amber-50 border border-amber-100">
                       <div className="flex items-center gap-2 mb-2">
                         <AlertTriangle className="w-4 h-4 text-amber-600" />
-                        <p className="text-sm font-medium text-amber-900">用户痛点总结概括</p>
+                        <p className="text-sm font-medium text-amber-900">用户痛点总结</p>
                       </div>
-                      {(detail.painPoints as string[])?.length > 0 ? (
-                        <div className="space-y-2">
-                          {(detail.painPoints as string[]).slice(0, 5).map((point, i) => (
-                            <div key={i} className="flex items-start gap-2">
-                              <span className="text-amber-600 text-xs font-bold shrink-0 mt-0.5">{i + 1}</span>
-                              <p className="text-xs text-amber-900/90 leading-relaxed">{point}</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">暂无痛点总结</p>
-                      )}
+                      <div className="space-y-2">
+                        {(detail.painPoints as string[]).slice(0, 5).map((point, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <span className="text-amber-600 text-xs font-bold shrink-0 mt-0.5">{i + 1}</span>
+                            <p className="text-xs text-amber-900/90 leading-relaxed">{point}</p>
+                          </div>
+                        ))}
+                      </div>
                     </div>
+                  )}
 
-                    <div className="p-4 rounded-xl bg-violet-50 border border-violet-100">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Lightbulb className="w-4 h-4 text-violet-600" />
-                        <p className="text-sm font-medium text-violet-900">设计方案解决建议</p>
-                      </div>
-                      {(detail.designSolutions as string[])?.length > 0 ? (
-                        <div className="space-y-2">
-                          {(detail.designSolutions as string[]).slice(0, 5).map((sol, i) => (
-                            <div key={i} className="flex items-start gap-2">
-                              <Lightbulb className="w-3.5 h-3.5 text-violet-500 shrink-0 mt-0.5" />
-                              <p className="text-xs text-violet-900/90 leading-relaxed">{sol}</p>
+                  {/* Issues Deep Analysis - 四维度结构化卡片 */}
+                  {(() => {
+                    const issues = detail.designSolutions as any[];
+                    if (!issues || issues.length === 0) return null;
+                    const isStructured = typeof issues[0] === "object" && issues[0]?.topic;
+                    if (!isStructured) return null;
+                    return (
+                      <div>
+                        <div className="flex items-center gap-2 mb-3">
+                          <Bot className="w-4 h-4 text-blue-600" />
+                          <p className="text-sm font-medium">问题深度分析</p>
+                          <span className="text-xs text-muted-foreground">共 {issues.length} 个问题</span>
+                        </div>
+                        <div className="space-y-3">
+                          {(issues as { topic: string; description: string; impact: string; quote: string }[]).map((issue, i) => (
+                            <div key={i} className="p-4 rounded-xl bg-blue-50/60 border border-blue-100">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-600 text-white text-xs font-bold">{i + 1}</span>
+                                <p className="text-sm font-semibold text-blue-900">{issue.topic}</p>
+                              </div>
+                              <div className="grid grid-cols-1 gap-2 ml-7">
+                                <div>
+                                  <p className="text-xs font-medium text-blue-700 mb-0.5">问题描述</p>
+                                  <p className="text-xs text-blue-900/80 leading-relaxed">{issue.description}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs font-medium text-orange-700 mb-0.5">造成影响</p>
+                                  <p className="text-xs text-orange-900/80 leading-relaxed">{issue.impact}</p>
+                                </div>
+                                <div className="p-2 rounded-lg bg-white/60 border border-blue-100/60">
+                                  <p className="text-xs font-medium text-violet-700 mb-0.5">用户原声</p>
+                                  <p className="text-xs text-violet-900/80 leading-relaxed italic">&ldquo;{issue.quote}&rdquo;</p>
+                                </div>
+                              </div>
                             </div>
                           ))}
                         </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">暂无解决建议</p>
-                      )}
-                    </div>
-                  </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -344,5 +379,7 @@ export default function Interviews() {
         </div>
       </div>
     </div>
+    <ModelConfigDialog open={configOpen} onOpenChange={setConfigOpen} />
+    </>
   );
 }

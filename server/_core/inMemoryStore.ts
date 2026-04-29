@@ -248,6 +248,62 @@ class InMemoryStore {
     return { success: this.todos.length !== before };
   }
 
+  // Create a meeting record for text analysis (no audio transcription needed)
+  createAnalyzeMeeting(userId: number, input: { title: string; content: string; audioLink?: string }) {
+    const id = this.next.meeting++;
+    const meeting: Meeting = {
+      id,
+      userId,
+      title: input.title,
+      audioUrl: input.audioLink || null,
+      transcript: input.content,
+      summary: null,
+      keyInsights: [],
+      structuredMinutes: [],
+      aiInsights: [],
+      duration: 0,
+      attendees: [],
+      status: "analyzing",
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    this.meetings.push(meeting);
+    return { id };
+  }
+
+  // Update a meeting's analysis result
+  updateMeetingResult(userId: number, id: number, updates: { summary?: string; keyInsights?: string[]; status?: string }) {
+    const idx = this.meetings.findIndex(m => m.userId === userId && m.id === id);
+    if (idx === -1) return;
+    this.meetings[idx] = {
+      ...this.meetings[idx],
+      ...(updates as any),
+      updatedAt: now(),
+    };
+  }
+
+  // Add todos for a meeting (used after AI analysis)
+  addTodosForMeeting(userId: number, meetingId: number, aiTodos: Array<{ title: string; priority: string; assignee?: string }>) {
+    for (const t of aiTodos) {
+      const todoId = this.next.todo++;
+      this.todos.push({
+        id: todoId,
+        meetingId,
+        userId,
+        title: t.title,
+        description: null,
+        priority: t.priority || "medium",
+        assignee: t.assignee || null,
+        dueDate: null,
+        completed: false,
+        sourceType: "meeting",
+        sourceId: meetingId,
+        createdAt: now(),
+        updatedAt: now(),
+      } as Todo);
+    }
+  }
+
   listMeetingComments(userId: number, meetingId: number) {
     return this.meetingComments
       .filter(c => c.meetingId === meetingId)
@@ -343,6 +399,15 @@ class InMemoryStore {
     return { success: true };
   }
 
+  deleteIdea(userId: number, id: number) {
+    const idx = this.ideas.findIndex(i => i.userId === userId && i.id === id);
+    if (idx < 0) throw new Error("Not found");
+    this.ideas.splice(idx, 1);
+    // 同时清理关联的评论
+    this.ideaComments = this.ideaComments.filter(c => (c as any).ideaId !== id);
+    return { success: true };
+  }
+
   listIdeaComments(ideaId: number) {
     return [...this.ideaComments]
       .filter(c => (c as any).ideaId === ideaId)
@@ -362,6 +427,25 @@ class InMemoryStore {
     const idea = this.ideas.find(i => i.id === input.ideaId) as any;
     if (idea) idea.commentsCount = (idea.commentsCount || 0) + 1;
     return { success: true };
+  }
+
+  createTodoForIdea(userId: number, ideaId: number, title: string): number {
+    const id = this.next.todo++;
+    this.todos.push({
+      id,
+      userId,
+      meetingId: null,
+      title,
+      priority: "medium",
+      assignee: null,
+      dueDate: null,
+      completed: false,
+      sourceType: "idea",
+      sourceId: ideaId,
+      createdAt: now(),
+      updatedAt: now(),
+    } as Todo);
+    return id;
   }
 
   listInterviews(userId: number) {
@@ -393,70 +477,117 @@ class InMemoryStore {
     return { success: true };
   }
 
-  analyzeInterview(userId: number, id: number) {
-    const idx = this.interviews.findIndex(iv => iv.userId === userId && iv.id === id);
+  async analyzeInterview(userId: number, id: number) {
+    const idx = this.interviews.findIndex(iv2 => iv2.userId === userId && iv2.id === id);
     if (idx < 0) throw new Error("Not found");
 
     const iv = this.interviews[idx];
     const content = safeTrim(iv.content);
     const title = safeTrim(iv.title);
-    const text = `${title}\n${content}`.toLowerCase();
 
-    // Simple heuristic analysis for local preview (no LLM).
-    // We intentionally keep it deterministic so local testing is reliable.
-    const painPoints: string[] = [];
-    const designSolutions: string[] = [];
-    const audienceLabels: string[] = [];
-
-    const pushOnce = (arr: string[], item: string, limit = 6) => {
-      const normalized = item.trim();
-      if (!normalized) return;
-      if (arr.includes(normalized)) return;
-      arr.push(normalized);
-      if (arr.length > limit) arr.length = limit;
-    };
-
-    if (text.includes("卡") || text.includes("慢") || text.includes("延迟") || text.includes("等待")) {
-      pushOnce(painPoints, "流程/操作存在明显卡顿或等待成本，影响使用效率。");
-      pushOnce(designSolutions, "提供更清晰的进度反馈与关键路径提示，降低等待不确定性。");
-    }
-    if (text.includes("难") || text.includes("复杂") || text.includes("门槛") || text.includes("不会")) {
-      pushOnce(painPoints, "信息结构不清晰，导致学习成本高、难以快速上手。");
-      pushOnce(designSolutions, "用分步引导与示例模板组织内容，让用户能按步骤完成目标。");
-    }
-    if (text.includes("不一致") || text.includes("不稳定") || text.includes("差异")) {
-      pushOnce(painPoints, "不同场景下体验不一致，用户难以形成稳定预期。");
-      pushOnce(designSolutions, "统一交互规范与关键组件行为，并在多入口场景保持一致。");
-    }
-    if (text.includes("沟通") || text.includes("协作") || text.includes("反馈") || text.includes("对齐")) {
-      pushOnce(painPoints, "团队协作过程中结论难沉淀，反馈难追踪。");
-      pushOnce(designSolutions, "将洞察输出结构化（痛点/方案/行动），并支持版本与可追溯。");
-    }
-
-    // Fallbacks
-    if (painPoints.length === 0) {
-      pushOnce(painPoints, "用户在关键节点上缺少明确指引，导致决策与执行成本偏高。");
-      pushOnce(painPoints, "当前内容组织方式无法快速定位所需信息。");
-    }
-    if (designSolutions.length === 0) {
-      pushOnce(designSolutions, "用“目标-步骤-产出”组织信息，并在关键节点提供可操作建议。");
-      pushOnce(designSolutions, "引入结构化卡片与搜索/标签，提升信息可发现性。");
-    }
-    if (audienceLabels.length === 0) {
-      pushOnce(audienceLabels, "高频使用者");
-      pushOnce(audienceLabels, "流程导向人群");
-    }
-
+    // 先设置为分析中
     this.interviews[idx] = {
       ...(this.interviews[idx] as any),
-      audienceLabels,
-      painPoints,
-      designSolutions,
-      status: "done",
+      status: "analyzing",
       updatedAt: now(),
     } as any;
 
-    return { success: true };
+    // 尝试调用 LLM
+    try {
+      const { invokeLLM } = await import("./llm");
+      const llmRes = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content: `你是一位资深用户研究分析专家。请对访谈内容进行深度结构化分析。
+
+分析要求：
+1. 从访谈内容中提炼出关键问题（至少 3 个，最多 6 个）
+2. 每个问题须从以下四个维度进行结构化分析：
+   「问题主题」——用一句话概括该问题的核心
+   「问题描述」——详细描述该问题的具体表现和背景（不少于 50 字）
+   「造成影响」——分析该问题对用户体验、业务目标或效率的具体影响
+   「用户原声」——从访谈内容中提取最能代表该问题的用户原始表述（如无明确原声则根据上下文合理推断）
+3. 同时提取人群标签、痛点总结
+
+严格格式约束：
+1. 所有输出必须是纯中文（品牌专有名除外）
+2. 禁止使用任何 Markdown 格式符号（禁止 *、**、#、-（行首列表符）、>、\` 等）
+3. 使用「」表示强调
+
+严格用以下 JSON 格式回复：
+{"issues":[{"topic":"问题主题一句话","description":"问题详细描述","impact":"造成的影响分析","quote":"用户原声引用"}],"audienceLabels":["人群标签1","人群标签2"],"painPoints":["痛点总结1","痛点总结2"]}`,
+          },
+          {
+            role: "user",
+            content: `访谈主题：${title}\n受访者：${iv.interviewee || "未知"}\n\n访谈内容：\n${content || "（无内容）"}`,
+          },
+        ],
+      });
+
+      console.log("[inMemoryStore.analyzeInterview] LLM raw response received");
+      const raw = llmRes.choices[0]?.message?.content || "{}";
+      let jsonStr = typeof raw === "string" ? raw : JSON.stringify(raw);
+      // Strip thinking blocks and markdown code fences
+      jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1").trim();
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) jsonStr = jsonMatch[0];
+      // Fix common LLM JSON issues: trailing commas, unescaped control chars
+      jsonStr = jsonStr
+        .replace(/,\s*([}\]])/g, "$1")                    // trailing commas
+        .replace(/[\x00-\x1f]/g, (ch) => ch === "\n" || ch === "\r" || ch === "\t" ? ch : ""); // strip control chars except whitespace
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (e1) {
+        // Attempt repair: single-quote to double-quote, strip non-JSON prefix/suffix
+        console.warn("[inMemoryStore.analyzeInterview] JSON.parse failed, attempting repair. Raw snippet:", jsonStr.slice(0, 300));
+        try {
+          const repaired = jsonStr
+            .replace(/'/g, '"')                             // single quotes
+            .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":')     // unquoted keys
+            .replace(/,\s*([}\]])/g, "$1");                 // trailing commas again
+          parsed = JSON.parse(repaired);
+        } catch {
+          // Last resort: extract individual fields with regex
+          console.error("[inMemoryStore.analyzeInterview] JSON repair also failed, using regex extraction");
+          parsed = {
+            issues: [],
+            audienceLabels: [],
+            painPoints: [],
+          };
+        }
+      }
+
+      const clean = (s: string) => s?.replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1").replace(/^#{1,6}\s+/gm, "").replace(/`([^`]+)`/g, "$1").replace(/\*{1,3}/g, "") || "";
+      const cleanedIssues = (parsed.issues || []).map((issue: any) => ({
+        topic: clean(issue.topic || ""),
+        description: clean(issue.description || ""),
+        impact: clean(issue.impact || ""),
+        quote: clean(issue.quote || ""),
+      }));
+
+      this.interviews[idx] = {
+        ...(this.interviews[idx] as any),
+        audienceLabels: (parsed.audienceLabels || []).map(clean),
+        painPoints: (parsed.painPoints || []).map(clean),
+        designSolutions: cleanedIssues as any,
+        status: "done",
+        updatedAt: now(),
+      } as any;
+
+      return { success: true };
+    } catch (e: any) {
+      console.error("[inMemoryStore.analyzeInterview] LLM call failed:", e?.message || e);
+      // 恢复为 draft 状态，让用户知道失败了
+      this.interviews[idx] = {
+        ...(this.interviews[idx] as any),
+        status: "draft",
+        updatedAt: now(),
+      } as any;
+      throw new Error(e?.message || "AI 分析失败，请检查模型配置后重试");
+    }
   }
 
   updateInterview(

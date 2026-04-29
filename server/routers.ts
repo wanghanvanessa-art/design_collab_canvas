@@ -28,7 +28,7 @@ const authRouter = router({
 const meetingsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.listMeetings(ctx.user.id);
     return db.select().from(meetings).where(eq(meetings.userId, ctx.user.id)).orderBy(desc(meetings.createdAt));
   }),
 
@@ -37,7 +37,10 @@ const meetingsRouter = router({
     audioUrl: z.string().url(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) {
+      const { id } = demoStore.uploadMeeting({ userId: ctx.user.id, title: input.title, audioUrl: input.audioUrl, transcript: "" });
+      return { id };
+    }
 
     const [result] = await db.insert(meetings).values({
       userId: ctx.user.id,
@@ -134,9 +137,179 @@ const meetingsRouter = router({
     return { id: meetingId };
   }),
 
+  // AI 待办记事本：文字/链接输入 → AI 解析生成待办
+  analyzeText: protectedProcedure.input(z.object({
+    title: z.string().min(1),
+    content: z.string().optional().default(""),
+    audioLink: z.string().optional(),
+  })).mutation(async ({ ctx, input }) => {
+    if (!input.content?.trim() && !input.audioLink?.trim()) {
+      throw new Error("请输入文字记录或录音链接");
+    }
+
+    const db = await getDb();
+
+    // ─── Helper: transcribe audio link if provided ─────────────────────────
+    const transcribeIfNeeded = async (audioLink?: string): Promise<string> => {
+      if (!audioLink?.trim()) return "";
+      const link = audioLink.trim();
+      // Only attempt transcription for direct audio file URLs
+      const isAudioUrl = /\.(mp3|wav|webm|m4a|ogg|flac|mp4)(\?.*)?$/i.test(link) || /^https?:\/\//i.test(link);
+      if (!isAudioUrl) return `[录音链接] ${link}`;
+      try {
+        console.log("[analyzeText] Attempting to transcribe audio:", link);
+        const result = await transcribeAudio({ audioUrl: link, language: "zh" });
+        if ("error" in result) {
+          console.warn("[analyzeText] Transcription service error:", result.error, result.details);
+          // Fallback: try LLM with file_url for models that support audio
+          return `[录音链接，语音转录失败: ${result.error}] ${link}`;
+        }
+        console.log("[analyzeText] Transcription success, length:", result.text.length);
+        return `[以下是录音转录文字]\n${result.text}`;
+      } catch (err: any) {
+        console.warn("[analyzeText] Transcription failed:", err?.message);
+        return `[录音链接，转录失败] ${link}`;
+      }
+    };
+
+    // ─── Helper: build AI prompt and call LLM ──────────────────────────────
+    const analyzeWithAI = async (title: string, textContent: string, transcribedAudio: string) => {
+      const contentParts = [
+        `标题：${title}`,
+        transcribedAudio || "",
+        textContent ? `内容记录：\n${textContent}` : "",
+      ].filter(Boolean).join("\n\n");
+
+      const llmRes = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content: `你是一个专业的 AI 待办助手。用户会输入零散的会议笔记、文字记录、或者已经转录好的录音文字，你需要：
+1. 理解并整理这些零散信息
+2. 提取核心要点和关键信息
+3. 生成结构化的待办清单（按优先级分类）
+4. 给出简短的内容摘要
+
+请严格用以下 JSON 格式回复，不要输出多余文字：
+{"summary":"内容摘要","keyInsights":["要点1","要点2"],"todos":[{"title":"待办标题","priority":"high/medium/low","assignee":""}]}`,
+          },
+          { role: "user", content: contentParts },
+        ],
+      });
+
+      const rawContent = llmRes.choices[0]?.message?.content || "{}";
+      let jsonStr = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent);
+      jsonStr = jsonStr
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1")
+        .trim();
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) jsonStr = jsonMatch[0];
+      try {
+        return JSON.parse(jsonStr || "{}");
+      } catch {
+        console.error("[meetings.analyzeText] JSON parse failed, raw:", jsonStr.slice(0, 500));
+        throw new Error("AI 返回内容无法解析为 JSON，请尝试更换模型或重新提交");
+      }
+    };
+
+    // ─── No-DB path: use demoStore ───────────────────────────────────────
+    if (!db) {
+      const { id } = demoStore.createAnalyzeMeeting(ctx.user.id, {
+        title: input.title,
+        content: input.content || "",
+        audioLink: input.audioLink,
+      });
+
+      // Async: transcribe + analyze
+      (async () => {
+        try {
+          const transcribed = await transcribeIfNeeded(input.audioLink);
+          const parsed = await analyzeWithAI(input.title, input.content || "", transcribed);
+          demoStore.updateMeetingResult(ctx.user.id, id, {
+            summary: parsed.summary || "",
+            keyInsights: parsed.keyInsights || [],
+            status: "done",
+          });
+          if (parsed.todos?.length > 0) {
+            demoStore.addTodosForMeeting(ctx.user.id, id, parsed.todos);
+          }
+        } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          console.error("[meetings.analyzeText] failed:", errMsg);
+          demoStore.updateMeetingResult(ctx.user.id, id, {
+            summary: `AI 分析失败：${errMsg}。请检查模型配置是否正确。`,
+            status: "error",
+          });
+        }
+      })();
+
+      return { id };
+    }
+
+    // ─── DB path ─────────────────────────────────────────────────────────
+    const [result] = await db.insert(meetings).values({
+      userId: ctx.user.id,
+      title: input.title,
+      audioUrl: input.audioLink || null,
+      transcript: input.content || "",
+      status: "analyzing",
+    });
+    const meetingId = (result as any).insertId as number;
+
+    // Async: transcribe + analyze
+    (async () => {
+      try {
+        const db2 = await getDb();
+        if (!db2) return;
+
+        const transcribed = await transcribeIfNeeded(input.audioLink);
+
+        // If we got a transcript from audio, save it
+        if (transcribed && transcribed.includes("[以下是录音转录文字]")) {
+          await db2.update(meetings).set({ transcript: transcribed }).where(eq(meetings.id, meetingId));
+        }
+
+        const parsed = await analyzeWithAI(input.title, input.content || "", transcribed);
+
+        await db2.update(meetings).set({
+          summary: parsed.summary || "",
+          keyInsights: parsed.keyInsights || [],
+          status: "done",
+        }).where(eq(meetings.id, meetingId));
+
+        if (parsed.todos?.length > 0) {
+          for (const t of parsed.todos) {
+            await db2.insert(todos).values({
+              userId: ctx.user.id,
+              meetingId,
+              title: t.title,
+              priority: t.priority || "medium",
+              assignee: t.assignee || null,
+              sourceType: "meeting",
+              sourceId: meetingId,
+            });
+          }
+        }
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error("[meetings.analyzeText] failed:", errMsg);
+        const db3 = await getDb();
+        if (db3) {
+          await db3.update(meetings).set({
+            status: "error",
+            summary: `AI 分析失败：${errMsg}。请检查模型配置是否正确。`,
+          }).where(eq(meetings.id, meetingId));
+        }
+      }
+    })();
+
+    return { id: meetingId };
+  }),
+
   getById: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return null;
+    if (!db) return demoStore.getMeetingWithTodos(ctx.user.id, input.id);
     const [meeting] = await db.select().from(meetings).where(and(eq(meetings.id, input.id), eq(meetings.userId, ctx.user.id)));
     if (!meeting) return null;
     const meetingTodos = await db.select().from(todos).where(eq(todos.meetingId, input.id)).orderBy(desc(todos.createdAt));
@@ -155,7 +328,7 @@ const meetingsRouter = router({
     parentId: z.number().optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.addMeetingComment(ctx.user.id, ctx.user.name ?? undefined, input.meetingId, input.content, input.parentId);
     await db.insert(meetingComments).values({
       meetingId: input.meetingId,
       userId: ctx.user.id,
@@ -175,7 +348,7 @@ const meetingsRouter = router({
     completed: z.boolean().optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.updateTodo(ctx.user.id, input.id, input);
     const { id, ...updates } = input;
     await db.update(todos).set(updates as any).where(and(eq(todos.id, id), eq(todos.userId, ctx.user.id)));
     return { success: true };
@@ -190,7 +363,7 @@ const meetingsRouter = router({
     category: z.string().optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return { success: true, articleId: 0 }; // graceful no-op in demo mode
     // Verify meeting belongs to user
     const [meeting] = await db.select().from(meetings).where(and(eq(meetings.id, input.meetingId), eq(meetings.userId, ctx.user.id)));
     if (!meeting) throw new Error("Meeting not found");
@@ -227,7 +400,7 @@ const todosRouter = router({
     priority: z.enum(["high", "medium", "low"]).optional(),
   }).optional()).query(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) return [];
+    if (!db) return demoStore.listTodos(ctx.user.id, input?.priority);
     const conditions = [eq(todos.userId, ctx.user.id)];
     if (input?.priority) conditions.push(eq(todos.priority, input.priority));
     return db.select().from(todos).where(and(...conditions)).orderBy(desc(todos.createdAt));
@@ -235,7 +408,7 @@ const todosRouter = router({
 
   stats: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
-    if (!db) return { total: 0, pending: 0, done: 0 };
+    if (!db) return demoStore.statsTodos(ctx.user.id);
     const all = await db.select().from(todos).where(eq(todos.userId, ctx.user.id));
     return {
       total: all.length,
@@ -251,7 +424,7 @@ const todosRouter = router({
     dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.createTodo(ctx.user.id, { title: input.title, priority: input.priority, assignee: input.assignee, dueDate: input.dueDate });
     await db.insert(todos).values({
       userId: ctx.user.id,
       title: input.title,
@@ -268,14 +441,14 @@ const todosRouter = router({
     completed: z.boolean(),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.toggleTodo(ctx.user.id, input.id, input.completed);
     await db.update(todos).set({ completed: input.completed }).where(and(eq(todos.id, input.id), eq(todos.userId, ctx.user.id)));
     return { success: true };
   }),
 
   delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) return demoStore.deleteTodo(ctx.user.id, input.id);
     await db.delete(todos).where(and(eq(todos.id, input.id), eq(todos.userId, ctx.user.id)));
     return { success: true };
   }),
@@ -370,6 +543,19 @@ const ideasRouter = router({
     if (input.status !== undefined) updateData.status = input.status;
     if (input.tags !== undefined) updateData.tags = input.tags;
     await db.update(ideas).set(updateData).where(eq(ideas.id, input.id));
+    return { success: true };
+  }),
+
+  delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return demoStore.deleteIdea(ctx.user.id, input.id);
+    const [idea] = await db.select().from(ideas).where(and(eq(ideas.id, input.id), eq(ideas.userId, ctx.user.id)));
+    if (!idea) throw new Error("Not found");
+    // 级联删除关联数据
+    await db.delete(ideaReactions).where(eq(ideaReactions.ideaId, input.id));
+    await db.delete(ideaComments).where(eq(ideaComments.ideaId, input.id));
+    await db.delete(ideaVersions).where(eq(ideaVersions.ideaId, input.id));
+    await db.delete(ideas).where(eq(ideas.id, input.id));
     return { success: true };
   }),
 
@@ -477,6 +663,274 @@ const ideasRouter = router({
 
     return { title: idea.title, content, format: input.format === "word" ? "docx" : input.format };
   }),
+
+  // ─── AI Brainstorm: generate creative branches from a prompt ──────────────
+  aiBrainstorm: protectedProcedure.input(z.object({
+    prompt: z.string().min(1),
+    style: z.enum(["creative", "professional", "user_perspective"]).optional().default("creative"),
+  })).mutation(async ({ ctx, input }) => {
+    const stylePromptMap: Record<string, string> = {
+      creative: `你是一个顶尖创意发散专家。风格要求：大胆创意发散，鼓励天马行空的想法，注重新颖性和突破性。
+
+用户会输入一个关键词、一句话或一段描述，你需要进行多维度创意发散：
+
+1. 创意方向发散（至少 5 个方向）：每个方向须包含——
+   方向标题：简洁有力的中文标题
+   核心观点：一句话概括该方向的核心创意价值
+   详细展开：须包含以下四个层次，每个层次独立成段（段间用换行分隔）：
+     第一层「创意灵感」——描述这个创意的来源和灵感触发点
+     第二层「具体玩法」——详细描述 2-3 个可落地的创意玩法或方案
+     第三层「差异化亮点」——说明该方向与常规做法的差异优势
+     第四层「预期效果」——预估该方向可带来的价值和影响
+   标签：2-3 个分类关键词
+
+2. 行业案例参考（2-3 个）：每个案例须包含公司或产品名、具体做法描述、与当前主题的关联分析
+
+3. 结构化方案框架：包含总目标概述，以及分阶段路线图（每阶段含阶段名和具体任务列表）`,
+      professional: `你是一位资深行业战略顾问与方案架构师。风格要求：严谨专业、逻辑清晰、结构化强，注重可行性与商业价值。
+
+用户会输入一个关键词、一句话或一段描述，你需要进行系统性的专业分析：
+
+1. 多维度方向拆解（至少 5 个方向）：每个方向须包含——
+   方向标题：清晰的中文标题
+   核心观点：一句话概括价值主张
+   详细分析：从「背景与趋势」「核心策略」「预期收益」「潜在风险与应对」四个层面展开，每个层面用独立段落阐述
+   相关标签：2-3 个中文分类关键词
+
+2. 行业案例参考（2-3 个）：每个案例须包含公司或产品名、具体做法描述、与当前主题的关联分析
+
+3. 结构化方案框架：包含总目标概述，以及分阶段路线图（每阶段含阶段名和具体任务列表）
+
+请确保 details 字段内容充实、层次分明，使用换行分段组织内容，避免堆砌在一段中。`,
+      user_perspective: `你是一个用户体验与需求洞察专家。风格要求：从用户视角出发，关注痛点、体验和情感共鸣。
+
+用户会输入一个关键词、一句话或一段描述，你需要进行多维度用户洞察：
+
+1. 用户洞察方向（至少 5 个方向）：每个方向须包含——
+   方向标题：简洁有力的中文标题
+   核心观点：一句话概括该方向对用户的核心价值
+   详细展开：须包含以下四个层次，每个层次独立成段（段间用换行分隔）：
+     第一层「用户痛点」——描述目标用户在该维度的核心痛点和未满足需求
+     第二层「体验方案」——详细描述 2-3 个面向用户体验的具体解决方案
+     第三层「情感连接」——分析该方案如何与用户建立情感共鸣
+     第四层「预期效果」——预估该方向可带来的用户价值和满意度提升
+   标签：2-3 个分类关键词
+
+2. 行业案例参考（2-3 个）：每个案例须包含公司或产品名、具体做法描述、与当前主题的关联分析
+
+3. 结构化方案框架：包含总目标概述，以及分阶段路线图（每阶段含阶段名和具体任务列表）`,
+    };
+
+    const formatConstraint = `
+
+严格格式约束（务必遵守）：
+1. 所有输出内容必须是纯中文，禁止出现任何英文单词、英文短语、英文缩写或英文术语（仅保留品牌专有名如 iPhone、Tesla 等）
+2. 禁止使用任何 Markdown 格式符号：禁止 *、**、#、-（行首列表符）、>、\`（反引号）等
+3. 在 JSON 字符串值中，用「」表示强调，用换行符 \\n 分段，用数字编号（1. 2. 3.）组织列表
+4. details 字段必须内容充实（不少于 150 字），按上述多层次结构用 \\n\\n 分段组织，禁止一段话堆砌
+5. tags 数组中的标签必须是中文
+
+严格用以下 JSON 格式回复（cases 中的 url 字段请填写该案例公司或产品的官网链接，必须是真实可访问的 HTTPS 链接）：
+{"branches":[{"id":"branch_1","title":"方向标题","summary":"核心观点一句话","details":"「创意灵感」描述内容\\n\\n「具体玩法」描述内容\\n\\n「差异化亮点」描述内容\\n\\n「预期效果」描述内容","tags":["中文标签1","中文标签2"]}],"cases":[{"title":"案例名","desc":"简短描述","relevance":"与主题的关联","url":"https://example.com"}],"framework":{"goal":"目标概述","phases":[{"name":"阶段名","tasks":["任务1","任务2"]}]}}`;
+
+    const llmRes = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: stylePromptMap[input.style] + formatConstraint,
+        },
+        { role: "user", content: input.prompt },
+      ],
+    });
+    const raw = llmRes.choices[0]?.message?.content || "{}";
+    let jsonStr = typeof raw === "string" ? raw : JSON.stringify(raw);
+    jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1").trim();
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (jsonMatch) jsonStr = jsonMatch[0];
+    /** 清理 JSON 字符串值中的 Markdown 格式符号和英文乱码 */
+    const cleanContent = (obj: any): any => {
+      if (typeof obj === "string") {
+        return obj
+          .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")    // 移除 *加粗/斜体*
+          .replace(/^#{1,6}\s+/gm, "")                  // 移除 # 标题符号
+          .replace(/^[\-\*]\s+/gm, "")                  // 移除 - 或 * 列表符号（行首）
+          .replace(/`([^`]+)`/g, "$1")                   // 移除反引号包裹
+          .replace(/\*{1,3}/g, "")                       // 移除残留的独立星号
+          .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "") // 移除控制字符乱码
+          .replace(/\uFFFD/g, "");                       // 移除 Unicode 替换字符（乱码方块）
+      }
+      if (Array.isArray(obj)) return obj.map(cleanContent);
+      if (obj && typeof obj === "object") {
+        const result: any = {};
+        for (const [k, v] of Object.entries(obj)) result[k] = cleanContent(v);
+        return result;
+      }
+      return obj;
+    };
+    try {
+      const parsed = cleanContent(JSON.parse(jsonStr));
+      return { success: true, data: parsed };
+    } catch {
+      const fallbackStr = jsonStr.replace(/\*{1,3}([^*]*)\*{1,3}/g, "$1").replace(/^#{1,6}\s+/gm, "");
+      return { success: true, data: { branches: [{ id: "branch_1", title: "AI 原始输出", summary: fallbackStr.slice(0, 200), details: fallbackStr, tags: [] }], cases: [], framework: { goal: "", phases: [] } } };
+    }
+  }),
+
+  // ─── AI Continue Writing ──────────────────────────────────────────────────
+  aiContinueWrite: protectedProcedure.input(z.object({
+    ideaId: z.number(),
+    existingContent: z.string(),
+    instruction: z.string().optional().default("请继续展开这个观点"),
+    style: z.enum(["creative", "professional", "user_perspective"]).optional().default("creative"),
+  })).mutation(async ({ ctx, input }) => {
+    const stylePromptMap: Record<string, string> = {
+      creative: `你是一个专业的内容续写助手。续写风格：大胆创意发散、天马行空、注重新颖性。
+基于用户已有的内容，按照用户的指令进行续写或结构化补全。
+
+续写结构要求：
+1. 续写内容须有清晰的层次结构，使用数字编号（1. 2. 3.）组织要点
+2. 每个要点包含简短的小标题（用「」括起来），后接具体展开内容
+3. 段落之间用空行分隔，每段聚焦一个创意方向
+4. 确保续写内容有价值、可落地，避免空泛描述
+
+重要格式约束：
+1. 全部使用中文输出，禁止出现英文单词和英文缩写（品牌专有名除外）
+2. 禁止使用任何 Markdown 格式符号（禁止 *、**、#、-（行首列表符）、>、\` 等）
+3. 使用「」代替引号强调，使用数字编号代替列表
+4. 不要重复已有内容，不要输出 JSON`,
+      professional: `你是一位资深行业分析师与方案撰写专家。续写风格：严谨专业、结构化强、逻辑清晰。
+
+续写结构要求：
+1. 层次分明：使用数字编号（1. 2. 3.）和子编号（1.1 1.2）组织内容
+2. 每个要点用「」括起小标题，后接详细分析
+3. 论证充分：每个观点须附带论据或数据支撑，形成「观点、论据、结论」闭环
+4. 段落清晰：避免大段文字堆砌，每段聚焦一个要点，段间用空行分隔
+5. 可操作性：建议和方案须具体可执行，包含明确步骤
+
+重要格式约束：
+1. 全部使用中文输出，禁止出现英文单词和英文缩写（品牌专有名除外）
+2. 禁止使用任何 Markdown 格式符号（禁止 *、**、#、-（行首列表符）、>、\` 等）
+3. 使用「」代替引号强调，使用数字编号代替列表
+4. 不要重复已有内容，不要输出 JSON`,
+      user_perspective: `你是一个用户体验与需求洞察专家。续写风格：用户视角，关注痛点、体验和情感共鸣。
+基于用户已有的内容，按照用户的指令进行续写或结构化补全。
+
+续写结构要求：
+1. 续写内容须从用户真实场景出发，使用数字编号（1. 2. 3.）组织要点
+2. 每个要点包含简短的小标题（用「」括起来），后接具体展开内容
+3. 段落之间用空行分隔，关注用户情感共鸣和体验细节
+4. 确保续写内容有用户价值洞察，避免空泛描述
+
+重要格式约束：
+1. 全部使用中文输出，禁止出现英文单词和英文缩写（品牌专有名除外）
+2. 禁止使用任何 Markdown 格式符号（禁止 *、**、#、-（行首列表符）、>、\` 等）
+3. 使用「」代替引号强调，使用数字编号代替列表
+4. 不要重复已有内容，不要输出 JSON`,
+    };
+    const llmRes = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: stylePromptMap[input.style],
+        },
+        { role: "user", content: `已有内容：\n${input.existingContent}\n\n指令：${input.instruction}` },
+      ],
+    });
+    const raw = llmRes.choices[0]?.message?.content || "";
+    let text = (typeof raw === "string" ? raw : JSON.stringify(raw)).replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    // 后处理：清除 LLM 可能仍然输出的 Markdown 格式符号和乱码
+    text = text
+      .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")   // 移除 *加粗/斜体*
+      .replace(/^#{1,6}\s+/gm, "")                 // 移除 # 标题符号
+      .replace(/`([^`]+)`/g, "$1")                  // 移除反引号包裹
+      .replace(/\*{1,3}/g, "")                      // 移除残留的独立星号
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "") // 移除控制字符
+      .replace(/\uFFFD/g, "");                      // 移除 Unicode 替换字符
+    return { text };
+  }),
+
+  // ─── AI Review: evaluate a plan from multiple perspectives ────────────────
+  aiReview: protectedProcedure.input(z.object({
+    ideaId: z.number(),
+    content: z.string().min(1),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    const idea = db
+      ? (await db.select().from(ideas).where(eq(ideas.id, input.ideaId)))[0]
+      : demoStore.getIdea(ctx.user.id, input.ideaId);
+
+    const llmRes = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `你是一个资深方案评审专家。请从以下三个维度对方案进行评审：
+1. 业务逻辑：方案的商业可行性、市场竞争力
+2. 用户体验：目标用户的痛点匹配度、交互体验
+3. 落地可行性：技术难度、资源需求、时间成本
+
+严格用以下 JSON 格式回复：
+{"dimensions":[{"name":"业务逻辑","score":8,"feedback":"评价内容","suggestions":["建议1"]},{"name":"用户体验","score":7,"feedback":"评价内容","suggestions":["建议1"]},{"name":"落地可行性","score":6,"feedback":"评价内容","suggestions":["建议1"]}],"overallScore":7,"summary":"总体评价","actionItems":["行动项1","行动项2"]}`
+        },
+        { role: "user", content: `方案标题：${idea?.title || "未命名"}\n\n方案内容：\n${input.content}` },
+      ],
+    });
+    const raw = llmRes.choices[0]?.message?.content || "{}";
+    let jsonStr = typeof raw === "string" ? raw : JSON.stringify(raw);
+    jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1").trim();
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (jsonMatch) jsonStr = jsonMatch[0];
+    try {
+      return JSON.parse(jsonStr);
+    } catch {
+      return { dimensions: [], overallScore: 0, summary: "AI 评审解析失败，请重试", actionItems: [] };
+    }
+  }),
+
+  // ─── AI Convert action items to todos ─────────────────────────────────────
+  aiConvertToTodos: protectedProcedure.input(z.object({
+    ideaId: z.number(),
+    actionItems: z.array(z.string()),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    const created: { id: number; title: string }[] = [];
+    for (const item of input.actionItems) {
+      if (!db) {
+        const id = demoStore.createTodoForIdea(ctx.user.id, input.ideaId, item);
+        created.push({ id, title: item });
+      } else {
+        const [result] = await db.insert(todos).values({
+          userId: ctx.user.id,
+          title: item,
+          priority: "medium",
+          sourceType: "idea",
+          sourceId: input.ideaId,
+        });
+        created.push({ id: (result as any).insertId, title: item });
+      }
+    }
+    return { created };
+  }),
+
+  // ─── AI Save to Knowledge ─────────────────────────────────────────────────
+  aiSaveToKnowledge: protectedProcedure.input(z.object({
+    ideaId: z.number(),
+    title: z.string().min(1),
+    content: z.string().min(1),
+    tags: z.array(z.string()).optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) return { success: true, articleId: 0 };
+    const [result] = await db.insert(knowledgeArticles).values({
+      userId: ctx.user.id,
+      title: input.title,
+      content: input.content,
+      tags: input.tags || ["AI创意"],
+      category: "AI创意",
+      version: 1,
+      sourceType: "idea",
+    });
+    return { success: true, articleId: (result as any).insertId };
+  }),
 });
 
 // ─── Interviews Router ────────────────────────────────────────────────────────
@@ -535,36 +989,73 @@ const interviewsRouter = router({
         if (!db2) return;
         const llmRes = await invokeLLM({
           messages: [
-            { role: "system", content: "你是一个专业的用户研究分析师。请分析访谈内容，提取用户画像标签、痛点和设计解决方案建议。请用JSON格式回复。" },
-            { role: "user", content: `访谈主题：${iv.title}\n受访者：${iv.interviewee || "未知"}\n\n访谈内容：\n${iv.content || "（无内容）"}\n\n请分析并提取：1. 人群标签(audienceLabels, 数组) 2. 用户痛点(painPoints, 数组) 3. 设计解决方案建议(designSolutions, 数组)` },
-          ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "interview_analysis",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  audienceLabels: { type: "array", items: { type: "string" } },
-                  painPoints: { type: "array", items: { type: "string" } },
-                  designSolutions: { type: "array", items: { type: "string" } },
-                },
-                required: ["audienceLabels", "painPoints", "designSolutions"],
-                additionalProperties: false,
-              },
+            {
+              role: "system",
+              content: `你是一位资深用户研究分析专家。请对访谈内容进行深度结构化分析。
+
+分析要求：
+1. 从访谈内容中提炼出关键问题（至少 3 个，最多 6 个）
+2. 每个问题须从以下四个维度进行结构化分析：
+   「问题主题」——用一句话概括该问题的核心
+   「问题描述」——详细描述该问题的具体表现和背景（不少于 50 字）
+   「造成影响」——分析该问题对用户体验、业务目标或效率的具体影响
+   「用户原声」——从访谈内容中提取最能代表该问题的用户原始表述（如无明确原声则根据上下文合理推断）
+3. 同时提取人群标签、痛点总结和设计解决方案
+
+严格格式约束：
+1. 所有输出必须是纯中文（品牌专有名除外）
+2. 禁止使用任何 Markdown 格式符号（禁止 *、**、#、-（行首列表符）、>、\` 等）
+3. 使用「」表示强调
+
+严格用以下 JSON 格式回复：
+{"issues":[{"topic":"问题主题一句话","description":"问题详细描述","impact":"造成的影响分析","quote":"用户原声引用"}],"audienceLabels":["人群标签1","人群标签2"],"painPoints":["痛点总结1","痛点总结2"],"designSolutions":["设计方案建议1","设计方案建议2"]}`,
             },
-          },
+            {
+              role: "user",
+              content: `访谈主题：${iv.title}\n受访者：${iv.interviewee || "未知"}\n\n访谈内容：\n${iv.content || "（无内容）"}`,
+            },
+          ],
         });
-        const content = llmRes.choices[0]?.message?.content || "{}";
-        const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
+        const raw = llmRes.choices[0]?.message?.content || "{}";
+        let jsonStr = typeof raw === "string" ? raw : JSON.stringify(raw);
+        jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1").trim();
+        const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+        if (jsonMatch) jsonStr = jsonMatch[0];
+        // Fix common LLM JSON issues
+        jsonStr = jsonStr
+          .replace(/,\s*([}\]])/g, "$1")
+          .replace(/[\x00-\x1f]/g, (ch) => ch === "\n" || ch === "\r" || ch === "\t" ? ch : "");
+        let parsed: any;
+        try {
+          parsed = JSON.parse(jsonStr);
+        } catch {
+          console.warn("[interviews.analyze] JSON.parse failed, attempting repair. Raw snippet:", jsonStr.slice(0, 300));
+          try {
+            const repaired = jsonStr.replace(/'/g, '"').replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":').replace(/,\s*([}\]])/g, "$1");
+            parsed = JSON.parse(repaired);
+          } catch {
+            console.error("[interviews.analyze] JSON repair also failed, using fallback");
+            parsed = { issues: [], audienceLabels: [], painPoints: [] };
+          }
+        }
+
+        // 清理 Markdown 符号
+        const clean = (s: string) => s?.replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1").replace(/^#{1,6}\s+/gm, "").replace(/`([^`]+)`/g, "$1").replace(/\*{1,3}/g, "") || "";
+        const cleanedIssues = (parsed.issues || []).map((issue: any) => ({
+          topic: clean(issue.topic || ""),
+          description: clean(issue.description || ""),
+          impact: clean(issue.impact || ""),
+          quote: clean(issue.quote || ""),
+        }));
+
         await db2.update(interviews).set({
-          audienceLabels: parsed.audienceLabels || [],
-          painPoints: parsed.painPoints || [],
-          designSolutions: parsed.designSolutions || [],
+          audienceLabels: (parsed.audienceLabels || []).map(clean),
+          painPoints: (parsed.painPoints || []).map(clean),
+          designSolutions: cleanedIssues,
           status: "done",
         }).where(eq(interviews.id, input.id));
-      } catch {
+      } catch (e) {
+        console.error("[interviews.analyze] failed:", e);
         const db3 = await getDb();
         if (db3) await db3.update(interviews).set({ status: "draft" }).where(eq(interviews.id, input.id));
       }
@@ -1240,6 +1731,212 @@ const inspirationRouter = router({
 
     return { success: true };
   }),
+
+  // ── 图片转提示词 ─────────────────────────────────────────────────────────────
+  analyzeImage: protectedProcedure.input(z.object({
+    imageBase64: z.string().min(1),
+  })).mutation(async ({ input }) => {
+    const llmRes = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `你是一个专业的 AI 绘图提示词提取专家。用户会上传一张图片，请从图片中提取以下维度的信息，并输出一段干净、可直接复制用于 AI 绘图（如 Midjourney / Stable Diffusion）的英文提示词。
+
+提取维度：
+1. 主体（Subject）：图中核心对象
+2. 风格（Style）：艺术/设计风格
+3. 色彩（Color palette）：主色调和配色
+4. 构图（Composition）：视角、布局
+5. 光影（Lighting）：光源方向、明暗
+6. 质感（Texture/Material）：表面材质
+7. 细节描述（Details）：特殊细节元素
+
+请用 JSON 格式回复，包含如下字段：
+- prompt: 完整英文提示词（可直接用于AI绘图）
+- summaryCn: 将以上所有维度整合为一段流畅的中文描述（80-150字，用于让用户快速理解图片整体画面）
+- subject: 主体描述（中文）
+- style: 风格描述（中文）
+- colorPalette: 色彩描述（中文）
+- composition: 构图描述（中文）
+- lighting: 光影描述（中文）
+- texture: 质感描述（中文）
+- details: 细节描述（中文）`
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "请分析这张图片并提取 AI 绘图提示词。" },
+            { type: "image_url", image_url: { url: input.imageBase64 } },
+          ],
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "image_prompt_analysis",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              prompt: { type: "string" },
+              summaryCn: { type: "string" },
+              subject: { type: "string" },
+              style: { type: "string" },
+              colorPalette: { type: "string" },
+              composition: { type: "string" },
+              lighting: { type: "string" },
+              texture: { type: "string" },
+              details: { type: "string" },
+            },
+            required: ["prompt", "summaryCn", "subject", "style", "colorPalette", "composition", "lighting", "texture", "details"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const raw = llmRes.choices[0]?.message?.content || "{}";
+    let rawText = typeof raw === "string" ? raw : JSON.stringify(raw);
+    rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    const thinkStart = rawText.indexOf("<think>");
+    if (thinkStart !== -1) rawText = rawText.slice(0, thinkStart).trim();
+    const parsed = JSON.parse(rawText);
+    return parsed;
+  }),
+
+  // ── 灵感发散 ─────────────────────────────────────────────────────────────────
+  expandInspiration: protectedProcedure.input(z.object({
+    prompt: z.string().min(1),
+    mode: z.enum(["style", "composition", "mood", "all"]).default("all"),
+  })).mutation(async ({ input }) => {
+    const modeDesc: Record<string, string> = {
+      style: "仅生成风格变体（赛博朋克、治愈系、复古、极简、波普、浮世绘等）",
+      composition: "仅生成构图变体（特写、全景、俯拍、仰拍、对称、三分法等）",
+      mood: "仅生成情绪/氛围变体（温暖、冷峻、梦幻、紧张、孤寂、欢快等）",
+      all: "同时生成风格变体、构图变体、情绪/氛围变体三个维度",
+    };
+
+    const llmRes = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `你是一个专业的 AI 绘图灵感发散助手。用户会给你一段 AI 绘图提示词，你需要基于这段提示词进行创意发散。
+
+${modeDesc[input.mode]}
+
+请生成 6-9 张独立的灵感卡片，每张卡片包含：
+- title: 简短标题（中文，3-8字）
+- category: 所属分类（"style" / "composition" / "mood"）
+- prompt: 完整英文提示词（可直接用于AI绘图，在原始提示词基础上变体）
+- promptCn: 完整中文提示词（将英文 prompt 翻译为流畅的中文描述，便于用户理解）
+- description: 简短中文描述说明这个变体的特色（15-30字）
+
+请用 JSON 格式回复。`
+        },
+        { role: "user", content: `基础提示词：${input.prompt}\n\n请生成灵感变体卡片。` },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "inspiration_cards",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              cards: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    title: { type: "string" },
+                    category: { type: "string" },
+                    prompt: { type: "string" },
+                    promptCn: { type: "string" },
+                    description: { type: "string" },
+                  },
+                  required: ["title", "category", "prompt", "promptCn", "description"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["cards"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const raw = llmRes.choices[0]?.message?.content || "{}";
+    let rawText = typeof raw === "string" ? raw : JSON.stringify(raw);
+    rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    const thinkStart = rawText.indexOf("<think>");
+    if (thinkStart !== -1) rawText = rawText.slice(0, thinkStart).trim();
+    const parsed = JSON.parse(rawText);
+    return parsed;
+  }),
+
+  // ── 自然语言意图灵感发散 ────────────────────────────────────────────────────
+  chatExpand: protectedProcedure.input(z.object({
+    basePrompt: z.string().min(1),
+    userMessage: z.string().min(1),
+  })).mutation(async ({ input }) => {
+    const llmRes = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `你是一个专业的 AI 绘图灵感发散助手。用户有一段基础提示词，并会用自然语言告诉你想要的发散方向。
+请理解用户意图，基于基础提示词生成 3-6 张灵感变体卡片。
+
+每张卡片包含：
+- title: 简短标题（中文，3-8字）
+- category: 所属分类（"style" / "composition" / "mood"，根据用户意图自动判断最合适的分类）
+- prompt: 完整英文提示词（可直接用于AI绘图）
+- promptCn: 完整中文提示词（将英文 prompt 翻译为流畅的中文描述）
+- description: 简短中文描述说明这个变体的特色（15-30字）
+
+请用 JSON 格式回复。`
+        },
+        { role: "user", content: `基础提示词：${input.basePrompt}\n\n我的需求：${input.userMessage}` },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "chat_expand_cards",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              cards: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    title: { type: "string" },
+                    category: { type: "string" },
+                    prompt: { type: "string" },
+                    promptCn: { type: "string" },
+                    description: { type: "string" },
+                  },
+                  required: ["title", "category", "prompt", "promptCn", "description"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["cards"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const raw = llmRes.choices[0]?.message?.content || "{}";
+    let rawText = typeof raw === "string" ? raw : JSON.stringify(raw);
+    rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    const thinkIdx = rawText.indexOf("<think>");
+    if (thinkIdx !== -1) rawText = rawText.slice(0, thinkIdx).trim();
+    const parsed = JSON.parse(rawText);
+    return parsed;
+  }),
 });
 
 // ─── Reviews Router ───────────────────────────────────────────────────────────
@@ -1377,6 +2074,23 @@ const reviewsRouter = router({
 
     const primaryDesignUrl = input.designUrls[0];
 
+    // 设计评审必须使用视觉模型，覆盖用户可能配置的纯文本模型
+    const storedConfig = demoStore.getModelConfig();
+    const visionModel = (() => {
+      const m = (storedConfig.model || "").toLowerCase();
+      // 如果用户配置的已经是视觉模型则直接使用
+      if (m.includes("vl") || m.includes("vision") || m.includes("4o") || m.includes("gpt-4") || m.includes("glm-4v")) {
+        return storedConfig.model;
+      }
+      // 根据 API URL 推断合适的视觉模型
+      const url = (storedConfig.apiUrl || "").toLowerCase();
+      if (url.includes("dashscope") || url.includes("aliyun")) return "qwen-vl-max";
+      if (url.includes("openai")) return "gpt-4o";
+      if (url.includes("zhipu") || url.includes("bigmodel")) return "glm-4v-plus";
+      return "qwen-vl-max"; // 默认
+    })();
+    const visionConfig = { model: visionModel };
+
     if (!db) {
       const { id } = demoStore.uploadDesignReview(ctx.user.id, {
         title: input.title,
@@ -1390,7 +2104,7 @@ const reviewsRouter = router({
           { role: "user", content: buildDesignReviewUserContent(input.title, input.designUrls, input.mode) },
         ],
         ...(designReviewResponseFormat ? { response_format: designReviewResponseFormat } : {}),
-      }).then((llmRes) => {
+      }, visionConfig).then((llmRes) => {
         const rawContent = llmRes.choices[0]?.message?.content || "{}";
         let jsonStr = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent);
         // Strip thinking blocks and markdown code fences
@@ -1458,7 +2172,7 @@ const reviewsRouter = router({
             { role: "user", content: buildDesignReviewUserContent(input.title, input.designUrls, input.mode) },
           ],
           ...(designReviewResponseFormat ? { response_format: designReviewResponseFormat } : {}),
-        });
+        }, visionConfig);
 
         const rawContent = llmRes.choices[0]?.message?.content || "{}";
         const rawStr = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent);
