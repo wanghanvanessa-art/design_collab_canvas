@@ -106,6 +106,10 @@ temp/
 *.sqlite
 *.sqlite3
 
+# Local persistence (demo store snapshots)
+data/demo-store.json
+data/demo-store.backup.json
+
 # Webdev artifacts (checkpoint zips, migrations, etc.)
 .webdev/
 

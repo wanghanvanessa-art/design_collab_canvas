@@ -13,6 +13,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
 import { ENV } from "./env";
 import { runFollowBuildersIngest } from "./followBuildersIngest";
+import { loadStoreFromDisk, startAutoSave, saveStoreToDisk } from "./persistence";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -34,6 +35,17 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // ── Load persisted store from disk before any router/handler reads ────────
+  const loaded = loadStoreFromDisk();
+  if (loaded.ok) {
+    console.log(`[persistence] Loaded ${loaded.size} items from data/demo-store.json`);
+  } else if (loaded.error) {
+    console.warn(`[persistence] Could not load store: ${loaded.error}`);
+  } else {
+    console.log("[persistence] No existing store file, starting fresh");
+  }
+  startAutoSave();
+
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads

@@ -32,26 +32,82 @@ export default function Ideas() {
       // Build structured plain-text content from AI result
       const d = data.data;
 
+      // 终极清理：剥离 JSON 残骸、控制字符、Markdown 符号
+      const sanitize = (s: string): string => {
+        if (!s) return "";
+        let v = String(s)
+          .replace(/\\n/g, "\n")
+          .replace(/\\"/g, '"')
+          .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+          .replace(/\uFFFD/g, "")
+          .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")
+          .replace(/\*{1,3}/g, "")
+          .replace(/`{1,3}([^`]+)`{1,3}/g, "$1");
+        // 若整体看起来像 JSON 残片：含 "branches"/"sections"/"content" 等键
+        if (/"(branches|sections|content|cases|framework)"\s*:/.test(v)) {
+          // 去掉所有 JSON 结构符号，只留正文
+          v = v.replace(/"[a-zA-Z_]+"\s*:\s*/g, "")
+               .replace(/[{}\[\]"]/g, " ")
+               .replace(/\s{2,}/g, " ")
+               .trim();
+        }
+        return v.trim();
+      };
+
+      // 旧 details 字段兼容
+      const formatDetails = (details: string): string => {
+        const text = sanitize(details);
+        if (!text) return "";
+        return text
+          .replace(/\r\n/g, "\n")
+          .replace(/(^|\n)\s*「([^」\n]{2,20})」\s*/g, (_m, lead, title) => `${lead === "\n" ? "\n\n" : ""}### ${title}\n`)
+          .replace(/([。！？!?；;])\s*「([^」\n]{2,20})」\s*/g, (_m, end, title) => `${end}\n\n### ${title}\n`)
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+      };
+
+      // sections 数组 → ### 子标题 + 段落
+      const formatSections = (sections: Array<{ title?: string; content?: string }>): string => {
+        return sections
+          .filter(s => s && (s.title || s.content))
+          .map(s => {
+            const title = sanitize(s.title || "").replace(/[「」]/g, "").trim();
+            const content = sanitize(s.content || "");
+            return title ? `### ${title}\n\n${content}` : content;
+          })
+          .filter(Boolean)
+          .join("\n\n");
+      };
+
       // 统一的结构化内容组装（三种风格共用）
       const branchText = d.branches?.map((b: any, i: number) => {
-        const header = `${i + 1}. ${b.title}`;
-        const summary = `「核心观点」${b.summary}`;
-        const details = b.details?.trim() || "";
-        const tags = b.tags?.length ? `\n标签：${b.tags.join("、")}` : "";
-        return `## ${header}\n\n${summary}\n\n${details}${tags}`;
+        const title = sanitize(b.title || `方向 ${i + 1}`);
+        const header = `方向 ${i + 1}：${title}`;
+        const summaryRaw = sanitize(b.summary || "");
+        const summary = summaryRaw ? `> 核心观点：${summaryRaw}\n` : "";
+        const body = Array.isArray(b.sections) && b.sections.length
+          ? formatSections(b.sections)
+          : formatDetails(b.details || "");
+        const tagsArr = Array.isArray(b.tags) ? b.tags.map((t: string) => sanitize(t)).filter(Boolean) : [];
+        const tags = tagsArr.length ? `\n\n**标签：** ${tagsArr.join("、")}` : "";
+        return `## ${header}\n\n${summary}\n${body}${tags}`;
       }).join("\n\n---\n\n") || "";
 
       const sectionTitle = style === "professional" ? "行业案例参考" : "相关案例";
       const casesText = d.cases?.length
-        ? `\n\n---\n\n## ${sectionTitle}\n\n${d.cases.map((c: any, i: number) =>
-          `案例 ${i + 1}：${c.title}${c.url ? ` [查看案例](${c.url})` : ""}\n\n${c.desc}\n\n「关联分析」${c.relevance}`
-        ).join("\n\n")}`
+        ? `\n\n---\n\n## ${sectionTitle}\n\n${d.cases.map((c: any, i: number) => {
+          const ct = sanitize(c.title || `案例 ${i + 1}`);
+          const cd = sanitize(c.desc || "");
+          const cr = sanitize(c.relevance || "");
+          const url = (c.url && /^https?:\/\//.test(c.url)) ? ` [查看案例](${c.url})` : "";
+          return `### 案例 ${i + 1}：${ct}${url}\n\n${cd}${cr ? `\n\n**关联分析：** ${cr}` : ""}`;
+        }).join("\n\n")}`
         : "";
 
       const frameworkText = d.framework?.goal
-        ? `\n\n---\n\n## 方案框架\n\n「总目标」${d.framework.goal}\n\n${d.framework.phases?.map((p: any, i: number) =>
-          `阶段 ${i + 1}：${p.name}\n\n${p.tasks?.map((t: string, j: number) => `${j + 1}. ${t}`).join("\n")}`
-        ).join("\n\n") || ""}`
+        ? `\n\n---\n\n## 方案框架\n\n**总目标：** ${sanitize(d.framework.goal)}\n\n${(d.framework.phases || []).map((p: any, i: number) =>
+          `### 阶段 ${i + 1}：${sanitize(p?.name || "")}\n\n${(p?.tasks || []).map((t: string, j: number) => `${j + 1}. ${sanitize(t)}`).join("\n")}`
+        ).join("\n\n")}`
         : "";
 
       const content = branchText + casesText + frameworkText;

@@ -668,112 +668,300 @@ const ideasRouter = router({
   aiBrainstorm: protectedProcedure.input(z.object({
     prompt: z.string().min(1),
     style: z.enum(["creative", "professional", "user_perspective"]).optional().default("creative"),
-  })).mutation(async ({ ctx, input }) => {
-    const stylePromptMap: Record<string, string> = {
-      creative: `你是一个顶尖创意发散专家。风格要求：大胆创意发散，鼓励天马行空的想法，注重新颖性和突破性。
+  })).mutation(async ({ ctx: _ctx, input }) => {
+    // 风格提示词：每种风格定义 4 个固定 section 标题
+    const styleConfig = {
+      creative: {
+        role: "你是一个顶尖创意发散专家。风格要求：大胆创意发散、天马行空、注重新颖性和突破性。",
+        sectionTitles: ["创意灵感", "具体玩法", "差异化亮点", "预期效果"],
+        sectionHints: [
+          "描述这个创意的来源和灵感触发点（不少于 60 字）",
+          "用 1. 2. 3. 数字编号列出 2-3 个可落地玩法（每条不少于 30 字）",
+          "说明与常规做法的差异优势（不少于 60 字）",
+          "预估带来的价值和影响（不少于 50 字）",
+        ],
+      },
+      professional: {
+        role: "你是一位资深行业战略顾问与方案架构师。风格要求：严谨专业、逻辑清晰、结构化强，注重可行性与商业价值。",
+        sectionTitles: ["背景与趋势", "核心策略", "预期收益", "潜在风险与应对"],
+        sectionHints: [
+          "描述行业背景与趋势（不少于 60 字）",
+          "用 1. 2. 3. 数字编号列出 2-3 条核心策略（每条不少于 30 字）",
+          "描述预期商业收益与关键指标（不少于 50 字）",
+          "描述主要风险及对应方案（不少于 50 字）",
+        ],
+      },
+      user_perspective: {
+        role: "你是一个用户体验与需求洞察专家。风格要求：从用户视角出发，关注痛点、体验和情感共鸣。",
+        sectionTitles: ["用户痛点", "体验方案", "情感连接", "预期效果"],
+        sectionHints: [
+          "描述目标用户在该维度的核心痛点和未满足需求（不少于 60 字）",
+          "用 1. 2. 3. 数字编号列出 2-3 个面向用户体验的具体解决方案（每条不少于 30 字）",
+          "分析该方案如何与用户建立情感共鸣（不少于 50 字）",
+          "预估对用户价值和满意度的提升（不少于 50 字）",
+        ],
+      },
+    } as const;
 
-用户会输入一个关键词、一句话或一段描述，你需要进行多维度创意发散：
+    const cfg = styleConfig[input.style];
+    const sectionLines = cfg.sectionTitles
+      .map((t, i) => `     [${t}] ${cfg.sectionHints[i]}`)
+      .join("\n");
 
-1. 创意方向发散（至少 5 个方向）：每个方向须包含——
-   方向标题：简洁有力的中文标题
-   核心观点：一句话概括该方向的核心创意价值
-   详细展开：须包含以下四个层次，每个层次独立成段（段间用换行分隔）：
-     第一层「创意灵感」——描述这个创意的来源和灵感触发点
-     第二层「具体玩法」——详细描述 2-3 个可落地的创意玩法或方案
-     第三层「差异化亮点」——说明该方向与常规做法的差异优势
-     第四层「预期效果」——预估该方向可带来的价值和影响
-   标签：2-3 个分类关键词
+    // 纯文本结构化协议：用明确的行首标记分隔，LLM 更容易稳定输出
+    const systemPrompt = `${cfg.role}
 
-2. 行业案例参考（2-3 个）：每个案例须包含公司或产品名、具体做法描述、与当前主题的关联分析
+用户会输入一个关键词、一句话或一段描述，你需要进行多维度分析。请严格按以下纯文本格式输出，每行一个字段，禁止使用 JSON、禁止使用 Markdown 符号（*、#、-、>、反引号等），全部使用中文。
 
-3. 结构化方案框架：包含总目标概述，以及分阶段路线图（每阶段含阶段名和具体任务列表）`,
-      professional: `你是一位资深行业战略顾问与方案架构师。风格要求：严谨专业、逻辑清晰、结构化强，注重可行性与商业价值。
+=== 输出格式模板（务必严格遵守，每行以规定标记开头）===
 
-用户会输入一个关键词、一句话或一段描述，你需要进行系统性的专业分析：
+<方向>方向标题（简洁有力的中文）
+<概要>一句话概括该方向的核心价值
+${cfg.sectionTitles.map(t => `<${t}>该层次内容（可多行，换行继续写；遇到下一个<标记>才结束）`).join("\n")}
+<标签>标签1、标签2、标签3
 
-1. 多维度方向拆解（至少 5 个方向）：每个方向须包含——
-   方向标题：清晰的中文标题
-   核心观点：一句话概括价值主张
-   详细分析：从「背景与趋势」「核心策略」「预期收益」「潜在风险与应对」四个层面展开，每个层面用独立段落阐述
-   相关标签：2-3 个中文分类关键词
+<方向>第二个方向标题
+<概要>...
+（重复上述 section 和 标签）
 
-2. 行业案例参考（2-3 个）：每个案例须包含公司或产品名、具体做法描述、与当前主题的关联分析
+（至少输出 5 个 <方向> 块）
 
-3. 结构化方案框架：包含总目标概述，以及分阶段路线图（每阶段含阶段名和具体任务列表）
+=== 案例参考 ===
+<案例>案例名称
+<做法>具体做法描述
+<关联>与当前主题的关联分析
+<链接>https://example.com
 
-请确保 details 字段内容充实、层次分明，使用换行分段组织内容，避免堆砌在一段中。`,
-      user_perspective: `你是一个用户体验与需求洞察专家。风格要求：从用户视角出发，关注痛点、体验和情感共鸣。
+（至少 2 个案例块）
 
-用户会输入一个关键词、一句话或一段描述，你需要进行多维度用户洞察：
+=== 方案框架 ===
+<目标>总目标概述
+<阶段>第一阶段名称
+<任务>任务1
+<任务>任务2
+<阶段>第二阶段名称
+<任务>任务1
 
-1. 用户洞察方向（至少 5 个方向）：每个方向须包含——
-   方向标题：简洁有力的中文标题
-   核心观点：一句话概括该方向对用户的核心价值
-   详细展开：须包含以下四个层次，每个层次独立成段（段间用换行分隔）：
-     第一层「用户痛点」——描述目标用户在该维度的核心痛点和未满足需求
-     第二层「体验方案」——详细描述 2-3 个面向用户体验的具体解决方案
-     第三层「情感连接」——分析该方案如何与用户建立情感共鸣
-     第四层「预期效果」——预估该方向可带来的用户价值和满意度提升
-   标签：2-3 个分类关键词
+=== section 内容要求 ===
+${sectionLines}
 
-2. 行业案例参考（2-3 个）：每个案例须包含公司或产品名、具体做法描述、与当前主题的关联分析
-
-3. 结构化方案框架：包含总目标概述，以及分阶段路线图（每阶段含阶段名和具体任务列表）`,
-    };
-
-    const formatConstraint = `
-
-严格格式约束（务必遵守）：
-1. 所有输出内容必须是纯中文，禁止出现任何英文单词、英文短语、英文缩写或英文术语（仅保留品牌专有名如 iPhone、Tesla 等）
-2. 禁止使用任何 Markdown 格式符号：禁止 *、**、#、-（行首列表符）、>、\`（反引号）等
-3. 在 JSON 字符串值中，用「」表示强调，用换行符 \\n 分段，用数字编号（1. 2. 3.）组织列表
-4. details 字段必须内容充实（不少于 150 字），按上述多层次结构用 \\n\\n 分段组织，禁止一段话堆砌
-5. tags 数组中的标签必须是中文
-
-严格用以下 JSON 格式回复（cases 中的 url 字段请填写该案例公司或产品的官网链接，必须是真实可访问的 HTTPS 链接）：
-{"branches":[{"id":"branch_1","title":"方向标题","summary":"核心观点一句话","details":"「创意灵感」描述内容\\n\\n「具体玩法」描述内容\\n\\n「差异化亮点」描述内容\\n\\n「预期效果」描述内容","tags":["中文标签1","中文标签2"]}],"cases":[{"title":"案例名","desc":"简短描述","relevance":"与主题的关联","url":"https://example.com"}],"framework":{"goal":"目标概述","phases":[{"name":"阶段名","tasks":["任务1","任务2"]}]}}`;
+=== 重要约束 ===
+1. 每个 <标记> 必须独占一行起始位置，标记后紧跟内容（无空格）。
+2. section 的内容可换行，直到遇到下一个 <标记> 为止。
+3. 全部中文，禁止英文、禁止 JSON、禁止 Markdown 符号。
+4. 内容里如需列举，使用「1. 」「2. 」「3. 」数字编号，每项独立一行。
+5. 不要输出任何其他解释文字，直接按格式开始。`;
 
     const llmRes = await invokeLLM({
       messages: [
-        {
-          role: "system",
-          content: stylePromptMap[input.style] + formatConstraint,
-        },
+        { role: "system", content: systemPrompt },
         { role: "user", content: input.prompt },
       ],
     });
-    const raw = llmRes.choices[0]?.message?.content || "{}";
-    let jsonStr = typeof raw === "string" ? raw : JSON.stringify(raw);
-    jsonStr = jsonStr.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1").trim();
-    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (jsonMatch) jsonStr = jsonMatch[0];
-    /** 清理 JSON 字符串值中的 Markdown 格式符号和英文乱码 */
-    const cleanContent = (obj: any): any => {
-      if (typeof obj === "string") {
-        return obj
-          .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")    // 移除 *加粗/斜体*
-          .replace(/^#{1,6}\s+/gm, "")                  // 移除 # 标题符号
-          .replace(/^[\-\*]\s+/gm, "")                  // 移除 - 或 * 列表符号（行首）
-          .replace(/`([^`]+)`/g, "$1")                   // 移除反引号包裹
-          .replace(/\*{1,3}/g, "")                       // 移除残留的独立星号
-          .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "") // 移除控制字符乱码
-          .replace(/\uFFFD/g, "");                       // 移除 Unicode 替换字符（乱码方块）
+
+    const raw = llmRes.choices[0]?.message?.content || "";
+    const rawText = typeof raw === "string" ? raw : JSON.stringify(raw);
+    const cleanedRaw = rawText
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/```[\s\S]*?```/g, m => m.replace(/```(?:\w+)?/g, ""))
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+      .replace(/\uFFFD/g, "")
+      .trim();
+
+    /** 去除字符串值中可能残留的 Markdown 装饰符与零宽字符 */
+    const polish = (s: string): string =>
+      s
+        .replace(/\*{1,3}([^*\n]+)\*{1,3}/g, "$1")
+        .replace(/^#{1,6}\s+/gm, "")
+        .replace(/^\s*[-•·]\s+/gm, "")
+        .replace(/`([^`\n]+)`/g, "$1")
+        .replace(/[\u200B-\u200D\uFEFF]/g, "")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+
+    /** 解析纯文本协议：识别 <标记>内容，section 标题来自配置 */
+    const parseStructured = (text: string) => {
+      const allSectionTitles = new Set<string>([
+        ...cfg.sectionTitles,
+        "方向", "概要", "标签", "案例", "做法", "关联", "链接", "目标", "阶段", "任务",
+      ]);
+      // 按行解析：每行如以 < 开头且能匹配已知标记，则开启新字段
+      const lines = text.split(/\r?\n/);
+      type Event = { tag: string; value: string };
+      const events: Event[] = [];
+      let cur: Event | null = null;
+      const tagRe = /^<([^<>\s]+)>\s*(.*)$/;
+      for (const ln of lines) {
+        const m = ln.match(tagRe);
+        if (m && allSectionTitles.has(m[1])) {
+          if (cur) events.push({ tag: cur.tag, value: cur.value.trim() });
+          cur = { tag: m[1], value: m[2] };
+        } else if (cur) {
+          cur.value += (cur.value ? "\n" : "") + ln;
+        }
       }
-      if (Array.isArray(obj)) return obj.map(cleanContent);
-      if (obj && typeof obj === "object") {
-        const result: any = {};
-        for (const [k, v] of Object.entries(obj)) result[k] = cleanContent(v);
-        return result;
+      if (cur) events.push({ tag: cur.tag, value: cur.value.trim() });
+
+      type Branch = { id: string; title: string; summary: string; sections: { title: string; content: string }[]; tags: string[] };
+      type Case = { title: string; desc: string; relevance: string; url: string };
+      const branches: Branch[] = [];
+      const cases: Case[] = [];
+      let goal = "";
+      const phases: { name: string; tasks: string[] }[] = [];
+
+      let curBranch: Branch | null = null;
+      let curCase: Case | null = null;
+      let curPhase: { name: string; tasks: string[] } | null = null;
+
+      const flushBranch = () => {
+        if (curBranch && (curBranch.title || curBranch.sections.length)) {
+          branches.push(curBranch);
+        }
+        curBranch = null;
+      };
+      const flushCase = () => {
+        if (curCase && (curCase.title || curCase.desc)) cases.push(curCase);
+        curCase = null;
+      };
+      const flushPhase = () => {
+        if (curPhase && (curPhase.name || curPhase.tasks.length)) phases.push(curPhase);
+        curPhase = null;
+      };
+
+      for (const ev of events) {
+        const val = polish(ev.value);
+        switch (ev.tag) {
+          case "方向":
+            flushBranch(); flushCase(); flushPhase();
+            curBranch = { id: `branch_${branches.length + 1}`, title: val, summary: "", sections: [], tags: [] };
+            break;
+          case "概要":
+            if (curBranch) curBranch.summary = val;
+            break;
+          case "标签":
+            if (curBranch) {
+              curBranch.tags = val.split(/[、,，\s]+/).map(t => t.trim()).filter(Boolean).slice(0, 5);
+            }
+            break;
+          case "案例":
+            flushBranch(); flushCase(); flushPhase();
+            curCase = { title: val, desc: "", relevance: "", url: "" };
+            break;
+          case "做法":
+            if (curCase) curCase.desc = val;
+            break;
+          case "关联":
+            if (curCase) curCase.relevance = val;
+            break;
+          case "链接":
+            if (curCase) {
+              const m = val.match(/https?:\/\/\S+/);
+              if (m) curCase.url = m[0];
+            }
+            break;
+          case "目标":
+            flushBranch(); flushCase(); flushPhase();
+            goal = val;
+            break;
+          case "阶段":
+            flushBranch(); flushCase(); flushPhase();
+            curPhase = { name: val, tasks: [] };
+            break;
+          case "任务":
+            if (curPhase) curPhase.tasks.push(val);
+            break;
+          default:
+            // section 标题（属于 cfg.sectionTitles）
+            if (curBranch && (cfg.sectionTitles as readonly string[]).includes(ev.tag)) {
+              curBranch.sections.push({ title: ev.tag, content: val });
+            }
+        }
       }
-      return obj;
+      flushBranch(); flushCase(); flushPhase();
+
+      return {
+        branches,
+        cases,
+        framework: { goal, phases },
+      };
     };
-    try {
-      const parsed = cleanContent(JSON.parse(jsonStr));
-      return { success: true, data: parsed };
-    } catch {
-      const fallbackStr = jsonStr.replace(/\*{1,3}([^*]*)\*{1,3}/g, "$1").replace(/^#{1,6}\s+/gm, "");
-      return { success: true, data: { branches: [{ id: "branch_1", title: "AI 原始输出", summary: fallbackStr.slice(0, 200), details: fallbackStr, tags: [] }], cases: [], framework: { goal: "", phases: [] } } };
+
+    /** 当完全解析失败时：剥离所有标记符号，输出可读纯文本 */
+    const buildFallback = (text: string) => {
+      const cleaned = polish(
+        text
+          .replace(/<\/?[^>]{1,20}>/g, "\n")
+          .replace(/[{}\[\]]/g, " ")
+          .replace(/\s{2,}/g, " ")
+      );
+      return {
+        branches: [{
+          id: "branch_1",
+          title: "AI 输出解析失败",
+          summary: "模型未按规范格式返回，以下为原始回复清洗后的摘要，可重新发起生成。",
+          sections: [{ title: "原文摘要", content: cleaned.slice(0, 1200) || "无可用内容" }],
+          tags: ["解析失败"],
+        }],
+        cases: [],
+        framework: { goal: "", phases: [] },
+      };
+    };
+
+    const structured = parseStructured(cleanedRaw);
+    if (structured.branches.length > 0) {
+      return { success: true, data: structured };
     }
+
+    // 兼容：如果模型仍然返回 JSON，也尝试解析一次
+    try {
+      const first = cleanedRaw.indexOf("{");
+      const last = cleanedRaw.lastIndexOf("}");
+      if (first >= 0 && last > first) {
+        const parsed = JSON.parse(cleanedRaw.slice(first, last + 1));
+        if (parsed && Array.isArray(parsed.branches) && parsed.branches.length > 0) {
+          const branches = parsed.branches.map((b: any, i: number) => ({
+            id: b?.id || `branch_${i + 1}`,
+            title: polish(String(b?.title || `方向 ${i + 1}`)),
+            summary: polish(String(b?.summary || "")),
+            sections: Array.isArray(b?.sections)
+              ? b.sections.map((s: any) => ({
+                  title: polish(String(s?.title || "")).replace(/[「」]/g, ""),
+                  content: polish(String(s?.content || "")),
+                })).filter((s: any) => s.title || s.content)
+              : [],
+            tags: Array.isArray(b?.tags) ? b.tags.map((t: any) => polish(String(t))).filter(Boolean) : [],
+          }));
+          return {
+            success: true,
+            data: {
+              branches,
+              cases: Array.isArray(parsed.cases)
+                ? parsed.cases.map((c: any) => ({
+                    title: polish(String(c?.title || "")),
+                    desc: polish(String(c?.desc || "")),
+                    relevance: polish(String(c?.relevance || "")),
+                    url: String(c?.url || ""),
+                  }))
+                : [],
+              framework: parsed.framework && typeof parsed.framework === "object"
+                ? {
+                    goal: polish(String(parsed.framework.goal || "")),
+                    phases: Array.isArray(parsed.framework.phases)
+                      ? parsed.framework.phases.map((p: any) => ({
+                          name: polish(String(p?.name || "")),
+                          tasks: Array.isArray(p?.tasks) ? p.tasks.map((t: any) => polish(String(t))).filter(Boolean) : [],
+                        }))
+                      : [],
+                  }
+                : { goal: "", phases: [] },
+            },
+          };
+        }
+      }
+    } catch { /* ignore */ }
+
+    return { success: true, data: buildFallback(cleanedRaw) };
   }),
 
   // ─── AI Continue Writing ──────────────────────────────────────────────────
@@ -2225,17 +2413,63 @@ const reviewsRouter = router({
 });
 
 // ─── Blindbox Router ──────────────────────────────────────────────────────────
-const BUILTIN_BLINDBOX = [
-  { type: "knowledge" as const, title: "设计冷知识：为什么蓝色是最受欢迎的颜色？", content: "研究表明，全球约40%的人最喜欢蓝色。这与人类进化有关——蓝色天空和清洁水源是安全的信号。这也是为什么科技公司（Facebook、Twitter、LinkedIn）都偏爱蓝色。", tags: ["色彩心理学", "设计原理"], source: "色彩研究所" },
-  { type: "tip" as const, title: "B端设计黄金法则：信息密度与认知负荷", content: "B端产品用户是专业人士，他们需要高密度信息。但信息密度≠混乱堆砌。关键是建立清晰的视觉层级：主要信息→次要信息→辅助信息，让用户能快速扫描定位。", tags: ["B端设计", "信息架构"], source: "设计团队沉淀" },
-  { type: "knowledge" as const, title: "Fitts定律：为什么大按钮更好点击？", content: "Fitts定律指出：点击目标所需时间与目标大小成反比，与距离成正比。这解释了为什么移动端按钮至少需要44×44px，为什么重要操作应放在屏幕边缘或角落。", tags: ["交互设计", "可用性"], source: "HCI研究" },
-  { type: "tip" as const, title: "设计评审前必做的5件事", content: "1. 明确评审目标（视觉/交互/业务？）2. 准备设计决策的理由 3. 标注尚未解决的问题 4. 准备备选方案 5. 提前发送设计稿给评审者。充分准备让评审更高效。", tags: ["设计流程", "协作"], source: "设计团队沉淀" },
-  { type: "knowledge" as const, title: "格式塔原理：大脑如何感知设计", content: "格式塔心理学的核心原理：相近的元素被认为是一组（接近律）、相似的元素被认为是一组（相似律）、封闭的形状更容易被识别（封闭律）。掌握这些原理能让你的设计更直觉化。", tags: ["视觉设计", "心理学"], source: "设计基础理论" },
-  { type: "case" as const, title: "Notion的信息架构：从复杂到简单", content: "Notion成功的关键在于将复杂的数据库功能包装在简单的块编辑器中。用户先看到的是熟悉的文档界面，高级功能通过渐进式披露呈现。这种设计让新手和专家都能找到自己的节奏。", tags: ["产品设计", "信息架构", "案例分析"], source: "产品分析" },
-  { type: "tip" as const, title: "空状态设计：不要浪费这个机会", content: "空状态是用户首次使用功能时看到的界面。好的空状态设计应该：1. 解释这个功能是什么 2. 告诉用户如何开始 3. 提供一个明确的CTA。空状态是引导用户的绝佳机会。", tags: ["UI设计", "用户引导"], source: "设计团队沉淀" },
-  { type: "knowledge" as const, title: "为什么圆角让人感觉更友好？", content: "神经科学研究表明，人类大脑对尖角有潜意识的警惕反应（可能是进化的危险信号）。圆角触发更放松、友好的感知。这也是为什么现代UI设计普遍采用圆角——它降低了视觉紧张感。", tags: ["视觉设计", "神经科学"], source: "认知科学研究" },
-  { type: "case" as const, title: "Linear的设计哲学：速度即设计", content: "Linear将「速度」作为核心设计价值。他们的界面极度精简，大量使用键盘快捷键，加载时间控制在100ms以内。这种对速度的执着让专业用户爱不释手，也证明了B端工具的设计可以非常优雅。", tags: ["B端设计", "产品哲学", "案例分析"], source: "产品分析" },
-  { type: "tip" as const, title: "对比度不只是无障碍要求", content: "WCAG要求正文文字对比度至少4.5:1，但好的对比度设计远不止于此。高对比度能提升可读性、建立视觉层级、在各种光线环境下保持可用性。推荐工具：Colour Contrast Analyser。", tags: ["Accessibility", "视觉设计"], source: "设计规范" },
+type BlindboxType = "case" | "knowledge" | "tip" | "trend";
+type BlindboxItem = { type: BlindboxType; title: string; content: string; tags: string[]; source: string };
+const BUILTIN_BLINDBOX: BlindboxItem[] = [
+  // ─── B端设计 / 设计系统 ───────────────────────────────────────────────────
+  { type: "tip", title: "B端设计黄金法则：信息密度与认知负荷", content: "B端产品用户是专业人士，他们需要高密度信息。但信息密度≠混乱堆砌。关键是建立清晰的视觉层级：主要信息→次要信息→辅助信息，让用户能快速扫描定位。配合 8pt 网格、统一行高与对齐基线，密度高也不杂乱。", tags: ["B端设计", "信息架构", "认知负荷"], source: "设计团队沉淀" },
+  { type: "case", title: "Linear 的设计哲学：速度即设计", content: "Linear 将「速度」作为核心设计价值，界面极度精简，大量使用键盘快捷键，加载时间控制在 100ms 以内，状态切换无任何动画卡顿。这种对速度的执着让专业用户爱不释手，也证明了 B 端工具的设计可以非常优雅——高效本身就是一种美学。", tags: ["B端设计", "产品哲学", "案例分析"], source: "产品分析" },
+  { type: "case", title: "Stripe Dashboard：把复杂金融做成可读的故事", content: "Stripe 用三件事把支付后台讲清楚：1）把抽象指标转成时序图与同环比卡片；2）用一致的状态色（成功绿、待处理黄、失败红）覆盖全产品；3）每张表格都自带可保存的过滤器。这套语义化数据可视让运营、财务、工程师能用同一个界面对话。", tags: ["B端设计", "数据可视化", "金融SaaS"], source: "产品分析" },
+  { type: "case", title: "Figma 多人协作的细节：「在场感」如何被设计出来", content: "Figma 把协作者的光标、选区、命名头像同步到 16ms 级延迟，并用渐隐尾迹避免视觉打架；评论用气泡贴在像素位置而非画布外侧，让讨论锚定在真实对象上。「在场感」不是技术指标，而是被设计反复打磨出的体验语言。", tags: ["体验设计", "协作产品", "案例分析"], source: "产品分析" },
+  { type: "tip", title: "B端表格设计的 7 条铁律", content: "1）首列固定且高对比；2）数字右对齐、文字左对齐、状态居中；3）行高至少 40px 留出可点击区；4）默认隐藏非核心列并提供列管理；5）大数据用虚拟滚动；6）排序与筛选状态可分享 URL；7）批量操作走顶部工具条而不是每行复选。", tags: ["B端设计", "表格", "可用性"], source: "设计规范" },
+  { type: "tip", title: "B端表单设计：长表单不可怕，可怕的是没有节奏", content: "把超过 8 个字段的表单切成「分组+步骤」，每组聚焦一个心智模型；必填项用红星而非红框（避免错误提示前的视觉污染）；错误信息贴字段下方而不是顶部；离开页面前提示草稿保存。节奏感来自分组、提示、保存三件套。", tags: ["B端设计", "表单设计", "用户引导"], source: "设计团队沉淀" },
+  { type: "knowledge", title: "设计 Token 的三层结构：原子、语义、组件", content: "成熟设计系统的 Token 通常分三层：原子 Token（color.blue.500）描述视觉值；语义 Token（color.text.primary）描述用途；组件 Token（button.primary.bg）绑定到具体组件。多主题和多品牌只需替换语义层映射即可，原子层和组件层稳定不动。", tags: ["设计系统", "Design Tokens", "B端设计"], source: "设计基础理论" },
+
+  // ─── 体验设计 / 交互原理 ──────────────────────────────────────────────────
+  { type: "knowledge", title: "Fitts 定律：为什么大按钮更好点击？", content: "Fitts 定律指出：点击目标所需时间与目标大小成反比，与距离成正比。这解释了为什么移动端按钮至少需要 44×44px，为什么 macOS 把菜单栏放在屏幕顶部边缘（无限远等价的「无限大」），也是为什么右键菜单优于深层导航。", tags: ["交互设计", "可用性", "HCI"], source: "HCI 研究" },
+  { type: "knowledge", title: "Hick 定律：选项越多，决策越慢", content: "Hick 定律：决策时间随选项数量的对数增长。这意味着不是越多功能越好——10 个选项的菜单比 5 个慢约 60%。解决方案：分组、默认值、最近使用、搜索。优秀产品都在「藏起来又找得到」之间寻找平衡。", tags: ["交互设计", "决策心理学"], source: "HCI 研究" },
+  { type: "knowledge", title: "格式塔原理：大脑如何感知设计", content: "格式塔心理学的核心原理：相近的元素被认为是一组（接近律）、相似的元素被认为是一组（相似律）、封闭的形状更容易被识别（封闭律）、连续的线条优于分散点（连续律）。掌握这些原理能让你的设计更符合直觉。", tags: ["视觉设计", "心理学"], source: "设计基础理论" },
+  { type: "knowledge", title: "Doherty 阈值：400ms 是体验的生死线", content: "IBM 研究发现：交互响应在 400ms 以内时，用户能进入「心流」状态；超过这个阈值，注意力就会断裂。这就是为什么按钮点击要立即反馈、为什么列表加载要骨架屏、为什么搜索框要 debounce 而不是 throttle。400ms 不是性能指标，是体验阈值。", tags: ["交互设计", "性能体验"], source: "HCI 研究" },
+  { type: "knowledge", title: "为什么圆角让人感觉更友好？", content: "神经科学研究表明，人类大脑对尖角有潜意识的警惕反应（可能是进化中识别危险物体的本能）。圆角触发更放松、友好的感知。这也是为什么现代 UI 普遍采用圆角——它降低了视觉紧张感，让产品显得更「可亲近」。", tags: ["视觉设计", "神经科学"], source: "认知科学研究" },
+  { type: "tip", title: "微交互的 4 个组成部分", content: "Dan Saffer 在《微交互》中提出：每一个微交互都包含触发器（Trigger）、规则（Rules）、反馈（Feedback）、循环与模式（Loops & Modes）。点赞按钮、下拉刷新、保存提示——这些看似微小的动作，决定了产品是「能用」还是「好用」。", tags: ["交互设计", "微交互"], source: "设计基础理论" },
+  { type: "tip", title: "空状态设计：不要浪费这个机会", content: "空状态是用户首次使用功能时看到的界面。好的空状态应该：1）解释这个功能是什么；2）告诉用户如何开始；3）提供一个明确的 CTA；4）配一张能传达情绪的插画。空状态不是「没东西」，是引导用户上手的绝佳机会。", tags: ["UI 设计", "用户引导"], source: "设计团队沉淀" },
+  { type: "tip", title: "对比度不只是无障碍要求", content: "WCAG 要求正文文字对比度至少 4.5:1，大文字 3:1。但好的对比度设计远不止于此——它能提升可读性、建立视觉层级、在各种光线环境下保持可用性。推荐工具：Colour Contrast Analyser、Stark、APCA（下一代对比度算法）。", tags: ["无障碍", "视觉设计"], source: "设计规范" },
+  { type: "knowledge", title: "Peak-End 法则：用户只记得峰值与结尾", content: "诺贝尔奖得主 Kahneman 发现：人对一段体验的记忆，主要由「最强烈瞬间」和「结束时」决定，过程中的平均感受影响很小。所以好设计要懂得「制造峰值」（惊喜动效、彩蛋、社交时刻）和「优雅结尾」（成功页、感谢语、一键分享）。", tags: ["体验设计", "心理学"], source: "行为经济学" },
+
+  // ─── AI 设计 / AI 原生产品 ────────────────────────────────────────────────
+  { type: "trend", title: "AI 原生产品的「Prompt-as-UI」范式", content: "传统 GUI 让用户「点」，AI 原生产品让用户「说」。Linear、Notion、Raycast 都在把命令面板（Cmd+K）升级为自然语言入口：用户描述意图，AI 拆解为操作流。这种范式下，UI 的角色从「展示控件」变成「展示进度与结果」，设计重心向对话流和确认机制迁移。", tags: ["AI 设计", "产品趋势", "对话式 UI"], source: "AI 产品观察" },
+  { type: "trend", title: "AI 时代的设计师新角色：Prompt 体验设计师", content: "AI 产品里，提示词工程不再只是技术活，而是体验设计的核心环节。设计师需要为不同场景设计「提示模板」、为模糊请求设计「澄清反问」、为不确定结果设计「置信度展示」。GitHub Copilot Chat、Cursor 的命令面板都体现了这个新工种的价值。", tags: ["AI 设计", "Prompt Engineering", "新角色"], source: "AI 产品观察" },
+  { type: "tip", title: "AI 输出的不确定性如何在 UI 中表达？", content: "AI 不像传统软件给确定答案，UI 必须诚实表达「不确定」：1）流式输出让用户感知思考过程；2）多方案并列让用户挑选；3）置信度标签（高/中/低）；4）「我不确定」的明确表达；5）「重新生成」按钮永远在显眼位置。诚实是 AI 体验的底色。", tags: ["AI 设计", "不确定性 UI"], source: "AI 产品观察" },
+  { type: "case", title: "Notion AI 的「按需召唤」哲学", content: "Notion AI 没有把 AI 做成一个常驻聊天框，而是嵌在编辑器里——选中文字按空格唤起、用 /ai 触发命令、在表格里作为公式调用。AI 不抢主导权，只在用户明确需要时出现。这种「轻 AI 嵌入」让产品没有 AI 也能用，有 AI 时如虎添翼。", tags: ["AI 设计", "案例分析", "嵌入式 AI"], source: "产品分析" },
+  { type: "case", title: "Cursor 与 GitHub Copilot：AI 编程工具的两条路", content: "Copilot 走「灰色幽灵补全」路线，把 AI 藏在编辑器自动补全里；Cursor 走「Cmd+K 召唤」路线，让 AI 成为可对话的协作者。两者反映了 AI 介入工作流的两种模型：「无感增强」与「主动协作」。设计师选哪条路，取决于任务的可预测性和用户的专业度。", tags: ["AI 设计", "案例分析", "AI 编程"], source: "产品分析" },
+  { type: "tip", title: "设计 AI 产品的 3 条避坑指南", content: "1）不要把 AI 包装成万能助手——用户期望越高失望越大，明确告诉用户它能做什么；2）不要让 AI 默默改用户内容——任何修改都需要 diff 视图和「接受/拒绝」；3）不要让加载圈替代解释——用「正在分析需求…正在生成…正在校对…」的步骤化文案降低焦虑。", tags: ["AI 设计", "最佳实践"], source: "设计团队沉淀" },
+  { type: "trend", title: "多模态 AI 让「截图即需求」成为现实", content: "GPT-4V、Claude 3、Gemini 都能看懂截图。这意味着设计沟通的最小单元从「文字描述」变成「截图+一句话」：贴一张竞品截图说「学这个但更克制」，AI 直接产出风格一致的设计稿。设计工具的未来入口可能是一个粘贴框，不再是图层面板。", tags: ["AI 趋势", "多模态", "设计工具"], source: "AI 资讯" },
+
+  // ─── AI 资讯 / 行业趋势 ───────────────────────────────────────────────────
+  { type: "trend", title: "Anthropic 的 Artifacts：让 AI 输出可交互", content: "Claude 推出的 Artifacts 让 AI 不再只输出文字，而是渲染成可交互的卡片、代码沙盒、SVG、流程图。它代表了一个趋势：AI 输出的载体从「文字流」升级为「可操作对象」。这对 UI 设计师意味着——AI 产品的画布将比聊天气泡丰富 100 倍。", tags: ["AI 资讯", "Anthropic", "交互输出"], source: "AI 资讯" },
+  { type: "trend", title: "AI Agent 时代的「任务可观测性」需求暴涨", content: "AutoGPT、Devin 这类 Agent 产品让 AI 能自主跑几十步任务。用户最大的痛点不是「能不能做」，而是「在干什么」「卡在哪」。能否提供良好的执行轨迹可视化、断点续跑、人类介入接管，是 Agent 产品体验的胜负手。这是设计师最大的新机会之一。", tags: ["AI 资讯", "AI Agent", "可观测性"], source: "AI 资讯" },
+  { type: "trend", title: "OpenAI Canvas：聊天框已不够用", content: "ChatGPT 推出 Canvas 模式，把长文档、代码、图表抽出聊天流，放进右侧画布并支持局部编辑。这宣告了「线性对话流」作为 AI 主交互的局限——复杂任务需要双栏、可编辑、版本历史的工作区。设计语言正在从聊天回归到 IDE 隐喻。", tags: ["AI 资讯", "OpenAI", "交互范式"], source: "AI 资讯" },
+  { type: "trend", title: "Vercel v0 与 Galileo：自然语言生成 UI 走向生产", content: "v0、Galileo、Subframe 这类工具把「描述一个 UI」直接变成 React 代码或 Figma 文件。它们的共同设计模式：1）多版本并列让用户挑选；2）每个组件可独立 refine；3）输出代码而非图片，便于工程接力。设计的下游工序正在被 AI 重新洗牌。", tags: ["AI 资讯", "AI 生成 UI"], source: "AI 资讯" },
+  { type: "trend", title: "Apple Intelligence 的「克制」式 AI 整合", content: "Apple 把 AI 拆成无数个具体场景能力（重写、总结、智能回复、消息优先级），而不是做一个大模型聊天框。这是另一种 AI 设计哲学——让 AI 隐入工作流，让用户在不知不觉中受益，而非时刻意识到「我在用 AI」。", tags: ["AI 资讯", "Apple", "嵌入式 AI"], source: "AI 资讯" },
+  { type: "trend", title: "Perplexity 的「答案优先」颠覆搜索范式", content: "Perplexity 把搜索引擎重新定义为「答案引擎」：直接给结论，把链接作为引用脚注。这个转变挑战了 Google 二十年的「十条蓝链接」范式。对设计师的启示：当 AI 能直接给答案时，「索引界面」让位于「结果界面」，所有信息架构都需要重写。", tags: ["AI 资讯", "搜索体验", "范式革新"], source: "AI 资讯" },
+
+  // ─── 有趣的体验设计案例 ───────────────────────────────────────────────────
+  { type: "case", title: "Duolingo 的「负罪感设计」：那只猫头鹰为什么这么烦？", content: "Duolingo 用极致的拟人化推送（哭泣的多儿、威胁的多儿、绝望的多儿）创造了一种「不学就内疚」的情绪绑定。这违反了「不要打扰用户」的传统教条，却带来惊人留存。它证明：恰当的情绪冲突，比理性提醒更有效。这是行为设计的暗黑艺术。", tags: ["有趣案例", "情感设计", "行为设计"], source: "产品分析" },
+  { type: "case", title: "Apple Watch 的呼吸 App：用动效教你深呼吸", content: "打开「正念」中的呼吸提醒，屏幕上一组花瓣会随呼吸节奏舒展和收缩。没有文字、没有计时器，纯粹的视觉节律就能引导你进入冥想状态。这是「形式即功能」的极致——动效本身就是产品的全部价值。", tags: ["有趣案例", "动效设计", "情感设计"], source: "产品分析" },
+  { type: "case", title: "Stripe 404 页：错误页也能讲品牌故事", content: "Stripe 的 404 页面是一只折纸独角兽配一句「这条路你走错了，但风景还不错」。错误页不是技术异常的展示，而是品牌建立情绪连接的最后一公里。Slack、GitHub、Pinterest 都把错误页做成了「值得截图」的体验。", tags: ["有趣案例", "404 设计", "品牌体验"], source: "产品分析" },
+  { type: "case", title: "Spotify Wrapped：年终总结如何成为社交事件", content: "Spotify Wrapped 每年 12 月引爆社交媒体的核心设计：1）极强烈的视觉风格（每年大变）；2）个性化叙事（你的全年听歌画像）；3）一键分享卡片；4）排行榜社交比较。它证明：数据可视化的最高境界是变成一年一度的「文化仪式」。", tags: ["有趣案例", "数据可视化", "社交设计"], source: "产品分析" },
+  { type: "case", title: "Headspace 的呼吸引导：把医疗级体验做成日常", content: "Headspace 把临床冥想训练简化为「跟着圆圈呼吸」「听一段动画故事」「跟读咒语」。它把原本严肃的心理治疗包装成可爱的童话——动画风格、温柔配音、卡通角色。这是「医疗体验日常化」的范本：专业内容用童心传达。", tags: ["有趣案例", "情感设计", "健康产品"], source: "产品分析" },
+  { type: "case", title: "Things 3 的彩蛋：完成最后一个任务时", content: "在 Cultured Code 的 Things 3 里，当你勾掉一个清单的最后一个 todo，整个清单会优雅淡出，并播放一段「啵」的轻快音效。没有花哨弹窗，没有「恭喜你！」的对话，只有一个让人会心一笑的瞬间。这就是优秀微交互的样子——克制、精准、令人记住。", tags: ["有趣案例", "微交互", "情感设计"], source: "产品分析" },
+  { type: "case", title: "GitHub 贡献热力图：把代码量变成绿油油的草坪", content: "GitHub 把开发者每日提交数渲染成一年的绿色方格——颜色越深，提交越多。这个设计把「写代码」这件抽象的事变成了可视化的「养花」「种草」。开发者社区甚至因此衍生出「不要断 streak」的文化。最简单的可视化，催生了最强的行为驱动力。", tags: ["有趣案例", "数据可视化", "行为驱动"], source: "产品分析" },
+  { type: "case", title: "Notion 的拖拽魔法：万物皆可移动", content: "Notion 把「拖拽」做成了一种核心交互语言：拖块到任何位置、拖文件成附件、拖卡片改状态、拖列改顺序。每次拖拽都有清晰的落点提示和即时反馈。这种「物理化」的操作让数字内容像积木一样可玩，也是它能从笔记软件长成多用途工具的关键。", tags: ["有趣案例", "拖拽交互", "产品设计"], source: "产品分析" },
+
+  // ─── 色彩 / 心理学 / 通用 ─────────────────────────────────────────────────
+  { type: "knowledge", title: "为什么蓝色是最受欢迎的颜色？", content: "研究表明，全球约 40% 的人最喜欢蓝色。这与人类进化有关——蓝色天空和清洁水源是安全的信号。这也是为什么金融、医疗、科技公司（Facebook、Twitter、LinkedIn、Salesforce）都偏爱蓝色：它在视觉上自带「可信赖」属性。", tags: ["色彩心理学", "设计原理"], source: "色彩研究所" },
+  { type: "knowledge", title: "「红色 CTA」的迷思：颜色不是关键，对比度才是", content: "经典 A/B 测试常见红色按钮转化更高，但真相不是「红色更好」，而是「红色与周围对比度更高」。HubSpot 在白底页面上测试时红色赢，但在红色品牌色页面上输给了绿色。结论：CTA 的颜色应该是页面里最突出的「异色」，而不是固定某一种颜色。", tags: ["色彩心理学", "转化优化"], source: "A/B 测试研究" },
+  { type: "tip", title: "设计评审前必做的 5 件事", content: "1）明确评审目标（视觉/交互/业务？）；2）准备每个设计决策的理由；3）标注尚未解决的问题，主动暴露不确定性；4）准备 1-2 个备选方案；5）提前 24 小时发送设计稿，让评审者带着问题来。充分准备让评审从「打分」变成「共创」。", tags: ["设计流程", "协作"], source: "设计团队沉淀" },
+  { type: "tip", title: "设计交付的「最后一公里」", content: "设计稿不是终点，工程实现才是。优秀的设计交付应包含：1）标注稿（间距、字号、颜色 token）；2）交互说明（边界状态、动效曲线、时长）；3）异常用例（空、错、加载、超长文本）；4）切图与 SVG；5）与开发的 1v1 走查。少了任何一项，都会在线上被打回原形。", tags: ["设计流程", "设计交付"], source: "设计团队沉淀" },
+  { type: "knowledge", title: "Jakob 定律：用户期望你跟别人一样", content: "尼尔森实验室提出：用户大部分时间在使用其他产品，他们期望你的产品和那些产品一样工作。这是为什么购物车永远在右上角、设置永远在头像下、汉堡菜单永远在左上。「创新交互」往往败给「熟悉的便利」，除非你能提供 10 倍优势。", tags: ["交互设计", "可用性"], source: "HCI 研究" },
+  { type: "knowledge", title: "60-30-10 配色法则", content: "经典室内设计配色法则：主色 60%（背景与大块面）、辅色 30%（次要区块）、强调色 10%（CTA 与重点提示）。这个比例能让画面有节奏不杂乱。在 UI 里通常是：白/浅灰 60% + 深灰文字 30% + 品牌色 10%。", tags: ["视觉设计", "配色"], source: "设计基础理论" },
 ];
 
 const blindboxRouter = router({

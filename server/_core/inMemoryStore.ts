@@ -1179,6 +1179,81 @@ class InMemoryStore {
     // For now, just return success - actual test will be done in the router
     return { success: true };
   }
+
+  // ─── Persistence ────────────────────────────────────────────────────────
+  /** 将所有内部状态序列化为 JSON-safe 对象 */
+  toJSON() {
+    return {
+      next: this.next,
+      modelConfig: this.modelConfig,
+      meetings: this.meetings,
+      todos: this.todos,
+      meetingComments: this.meetingComments,
+      ideas: this.ideas,
+      ideaComments: this.ideaComments,
+      interviews: this.interviews,
+      knowledgeArticles: this.knowledgeArticles,
+      knowledgeComments: this.knowledgeComments,
+      knowledgeFavorites: this.knowledgeFavorites,
+      knowledgeViews: this.knowledgeViews,
+      activities: this.activities,
+      designReviews: this.designReviews,
+      inspirationItems: this.inspirationItems,
+      inspirationSpawn: this.inspirationSpawn,
+    };
+  }
+
+  /** 从 JSON 对象恢复状态；自动把 *At/dueDate 等字符串字段转回 Date */
+  fromJSON(data: any) {
+    if (!data || typeof data !== "object") return;
+    const reviveDates = <T,>(arr: T[] | undefined): T[] => {
+      if (!Array.isArray(arr)) return [];
+      return arr.map((row: any) => {
+        if (!row || typeof row !== "object") return row;
+        const out: any = { ...row };
+        for (const k of Object.keys(out)) {
+          if (/At$|Date$/.test(k) && typeof out[k] === "string") {
+            const d = new Date(out[k]);
+            if (!isNaN(d.getTime())) out[k] = d;
+          }
+        }
+        return out as T;
+      });
+    };
+    if (data.next && typeof data.next === "object") {
+      this.next = { ...this.next, ...data.next };
+    }
+    if (data.modelConfig && typeof data.modelConfig === "object") {
+      this.modelConfig = { ...this.modelConfig, ...data.modelConfig };
+    }
+    this.meetings = reviveDates(data.meetings);
+    this.todos = reviveDates(data.todos);
+    this.meetingComments = reviveDates(data.meetingComments);
+    this.ideas = reviveDates(data.ideas);
+    this.ideaComments = reviveDates(data.ideaComments);
+    this.interviews = reviveDates(data.interviews);
+    this.knowledgeArticles = reviveDates(data.knowledgeArticles);
+    this.knowledgeComments = reviveDates(data.knowledgeComments);
+    this.knowledgeFavorites = reviveDates(data.knowledgeFavorites);
+    this.knowledgeViews = reviveDates(data.knowledgeViews);
+    this.activities = reviveDates(data.activities);
+    this.designReviews = reviveDates(data.designReviews);
+    this.inspirationItems = reviveDates(data.inspirationItems);
+    if (data.inspirationSpawn && typeof data.inspirationSpawn === "object") {
+      this.inspirationSpawn = { ...this.inspirationSpawn, ...data.inspirationSpawn };
+    }
+  }
+
+  /** 计算所有数组总条目数，便于持久化模块判断是否需要写盘 */
+  totalItems(): number {
+    return (
+      this.meetings.length + this.todos.length + this.meetingComments.length +
+      this.ideas.length + this.ideaComments.length + this.interviews.length +
+      this.knowledgeArticles.length + this.knowledgeComments.length +
+      this.knowledgeFavorites.length + this.knowledgeViews.length +
+      this.activities.length + this.designReviews.length + this.inspirationItems.length
+    );
+  }
 }
 
 export const demoStore = new InMemoryStore();

@@ -44,75 +44,167 @@ const EXPORT_FORMATS = [
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** 清理文本中的 Markdown 格式符号和乱码，保留纯文本 */
-function cleanMarkdownSymbols(text: string): string {
+/** 仅清理真正的"乱码"字符，保留 Markdown 结构信号供结构化渲染器识别 */
+function sanitizeText(text: string): string {
   return text
-    .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")   // 移除 *加粗/斜体* 包裹
-    .replace(/^#{1,6}\s+/gm, "")                 // 移除行首 # 标题符号
-    .replace(/`([^`]+)`/g, "$1")                  // 移除反引号包裹
-    .replace(/\*{1,3}/g, "")                      // 移除残留的独立星号
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "") // 移除控制字符
-    .replace(/\uFFFD/g, "");                      // 移除 Unicode 替换字符（乱码方块）
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "") // 控制字符
+    .replace(/\uFFFD/g, "")                                          // Unicode 替换字符（方块）
+    .replace(/`{1,3}([^`]+)`{1,3}/g, "$1");                          // 反引号包裹（保留内容）
 }
 
-/** 将文本中的 Markdown 链接 [text](url) 和裸 URL 渲染为可点击的 <a> 标签，同时清理 Markdown 格式符号 */
+/** 行内富文本：处理「强调」、链接、裸 URL、**加粗** */
+function InlineRich({ text }: { text: string }) {
+  // 优先级：Markdown 链接 > 裸 URL > **加粗** > 「强调」
+  const TOKEN_RE =
+    /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))|(https?:\/\/[^\s\])]+)|(\*\*([^*\n]+)\*\*)|(「([^」\n]+)」)/g;
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = TOKEN_RE.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m[1]) {
+      out.push(
+        <a key={key++} href={m[3]} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 underline underline-offset-2 decoration-blue-300 font-medium"
+          onMouseDown={e => e.stopPropagation()}>
+          {m[2]}<ExternalLink className="w-3 h-3 shrink-0 inline" />
+        </a>
+      );
+    } else if (m[4]) {
+      out.push(
+        <a key={key++} href={m[4]} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 underline underline-offset-2 decoration-blue-300 break-all"
+          onMouseDown={e => e.stopPropagation()}>
+          {m[4].length > 50 ? m[4].slice(0, 50) + "..." : m[4]}
+          <ExternalLink className="w-3 h-3 shrink-0 inline" />
+        </a>
+      );
+    } else if (m[5]) {
+      out.push(<strong key={key++} className="font-semibold text-gray-900">{m[6]}</strong>);
+    } else if (m[7]) {
+      out.push(
+        <span key={key++} className="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded-md bg-amber-50 text-amber-700 text-[12px] font-semibold border border-amber-100">
+          {m[8]}
+        </span>
+      );
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return <>{out}</>;
+}
+
+/** 结构化文本渲染器：识别 ##/### 标题、--- 分隔线、数字编号列表、空行分段 */
 function RichTextContent({ text }: { text: string }) {
-  // 先清理 Markdown 格式符号
-  const cleanedText = cleanMarkdownSymbols(text);
-  // 匹配 Markdown 链接 [label](url) 或裸 https:// URL
-  const TOKEN_RE = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))|(https?:\/\/[^\s\])]+)/g;
+  const cleaned = sanitizeText(text);
+  // 先按 --- 分隔线切大块
+  const blocks = cleaned.split(/\n\s*---+\s*\n/);
 
-  const elements: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
+  const renderBlock = (block: string, bIdx: number): React.ReactNode => {
+    const lines = block.split("\n");
+    const nodes: React.ReactNode[] = [];
+    let buffer: string[] = [];
+    let listItems: string[] = [];
+    let key = 0;
 
-  while ((match = TOKEN_RE.exec(cleanedText)) !== null) {
-    // 前面的普通文本
-    if (match.index > lastIndex) {
-      elements.push(cleanedText.slice(lastIndex, match.index));
-    }
-
-    if (match[1]) {
-      // Markdown 链接: [label](url)
-      elements.push(
-        <a
-          key={match.index}
-          href={match[3]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 underline underline-offset-2 decoration-blue-300 hover:decoration-blue-500 transition-colors font-medium"
-          onMouseDown={e => e.stopPropagation()}
-        >
-          {match[2]}
-          <ExternalLink className="w-3 h-3 shrink-0 inline" />
-        </a>
+    const flushParagraph = () => {
+      if (buffer.length === 0) return;
+      const para = buffer.join(" ").trim();
+      buffer = [];
+      if (!para) return;
+      nodes.push(
+        <p key={`p-${key++}`} className="text-sm leading-7 text-gray-700 my-2">
+          <InlineRich text={para} />
+        </p>
       );
-    } else if (match[4]) {
-      // 裸 URL
-      elements.push(
-        <a
-          key={match.index}
-          href={match[4]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 underline underline-offset-2 decoration-blue-300 hover:decoration-blue-500 transition-colors break-all"
-          onMouseDown={e => e.stopPropagation()}
-        >
-          {match[4].length > 50 ? match[4].slice(0, 50) + "..." : match[4]}
-          <ExternalLink className="w-3 h-3 shrink-0 inline" />
-        </a>
+    };
+    const flushList = () => {
+      if (listItems.length === 0) return;
+      const items = [...listItems];
+      listItems = [];
+      nodes.push(
+        <ol key={`ol-${key++}`} className="my-2 space-y-1.5 list-none">
+          {items.map((it, i) => (
+            <li key={i} className="flex gap-2.5 text-sm leading-7 text-gray-700">
+              <span className="shrink-0 w-5 h-5 mt-0.5 rounded-md bg-amber-100 text-amber-700 text-[11px] font-bold flex items-center justify-center">
+                {i + 1}
+              </span>
+              <span className="flex-1"><InlineRich text={it} /></span>
+            </li>
+          ))}
+        </ol>
       );
+    };
+
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
+      // 空行：段落分隔
+      if (!line.trim()) { flushList(); flushParagraph(); continue; }
+      // ## 二级标题
+      const h2 = line.match(/^##\s+(.+)/);
+      if (h2) {
+        flushList(); flushParagraph();
+        nodes.push(
+          <h3 key={`h2-${key++}`} className="font-display font-bold text-[15px] text-gray-900 mt-4 mb-2 pl-2 border-l-2 border-amber-400">
+            <InlineRich text={h2[1]} />
+          </h3>
+        );
+        continue;
+      }
+      // ### 三级标题
+      const h3 = line.match(/^###\s+(.+)/);
+      if (h3) {
+        flushList(); flushParagraph();
+        nodes.push(
+          <h4 key={`h3-${key++}`} className="font-semibold text-[13px] text-amber-700 mt-3 mb-1.5 flex items-center gap-1.5">
+            <span className="inline-block w-1 h-3.5 rounded-sm bg-amber-400" />
+            <InlineRich text={h3[1]} />
+          </h4>
+        );
+        continue;
+      }
+      // > 引用块（核心观点）
+      const quote = line.match(/^>\s*(.+)/);
+      if (quote) {
+        flushList(); flushParagraph();
+        nodes.push(
+          <div key={`q-${key++}`} className="my-2 px-3 py-2 rounded-lg bg-amber-50/60 border-l-4 border-amber-400 text-[13px] leading-6 text-gray-700">
+            <InlineRich text={quote[1]} />
+          </div>
+        );
+        continue;
+      }
+      // 数字编号列表项
+      const num = line.match(/^\s*(\d+)[.、)]\s+(.+)/);
+      if (num) {
+        flushParagraph();
+        listItems.push(num[2]);
+        continue;
+      }
+      // - / • 列表项 → 也作为编号处理
+      const bullet = line.match(/^\s*[\-•·]\s+(.+)/);
+      if (bullet) {
+        flushParagraph();
+        listItems.push(bullet[1]);
+        continue;
+      }
+      // 普通文本：收集到当前段
+      flushList();
+      buffer.push(line);
     }
+    flushList();
+    flushParagraph();
 
-    lastIndex = match.index + match[0].length;
-  }
+    return (
+      <div key={`block-${bIdx}`}>
+        {bIdx > 0 && <hr className="my-4 border-t border-dashed border-gray-200" />}
+        {nodes}
+      </div>
+    );
+  };
 
-  // 尾部剩余文本
-  if (lastIndex < cleanedText.length) {
-    elements.push(cleanedText.slice(lastIndex));
-  }
-
-  return <>{elements}</>;
+  return <div className="space-y-1">{blocks.map(renderBlock)}</div>;
 }
 
 function parseModulesFromContent(content: string): Module[] {
@@ -556,7 +648,7 @@ export default function IdeaDetail({ id }: { id: number }) {
                         onClick={() => isEditing && setEditingModuleId(mod.id)}
                       >
                         {mod.content?.trim() ? (
-                          <div className="whitespace-pre-wrap"><RichTextContent text={mod.content.trim()} /></div>
+                          <div><RichTextContent text={mod.content.trim()} /></div>
                         ) : (
                           <span className="text-gray-400 italic text-xs">{isEditing ? "点击编辑..." : "（暂无内容）"}</span>
                         )}
